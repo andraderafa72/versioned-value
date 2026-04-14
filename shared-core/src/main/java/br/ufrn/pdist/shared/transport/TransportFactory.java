@@ -8,6 +8,9 @@ public final class TransportFactory {
     }
 
     public static TransportLayer create(Protocol protocol) {
+        if (protocol == Protocol.TCP) {
+            return new TcpTransport();
+        }
         return new NoopTransport(protocol);
     }
 }
