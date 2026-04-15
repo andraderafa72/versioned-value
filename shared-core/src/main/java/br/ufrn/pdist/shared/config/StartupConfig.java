@@ -4,14 +4,24 @@ public record StartupConfig(Protocol protocol, String host, int port, String ins
 
     public static StartupConfig fromArgs(String[] args, int defaultPort, String defaultInstanceId) {
         Protocol protocol = Protocol.TCP;
+        int port = defaultPort;
+        String instanceId = defaultInstanceId;
 
         for (String arg : args) {
             if (arg.startsWith("--protocol=")) {
                 protocol = Protocol.from(arg.substring("--protocol=".length()));
+                continue;
+            }
+            if (arg.startsWith("--port=")) {
+                port = Integer.parseInt(arg.substring("--port=".length()));
+                continue;
+            }
+            if (arg.startsWith("--instance-id=")) {
+                instanceId = arg.substring("--instance-id=".length());
             }
         }
 
-        return new StartupConfig(protocol, "127.0.0.1", defaultPort, defaultInstanceId);
+        return new StartupConfig(protocol, "127.0.0.1", port, instanceId);
     }
 
     @Override

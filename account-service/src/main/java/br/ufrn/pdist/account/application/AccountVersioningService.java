@@ -1,22 +1,22 @@
 package br.ufrn.pdist.account.application;
 
 import br.ufrn.pdist.account.domain.Account;
-import br.ufrn.pdist.account.domain.VersionedValue;
+import br.ufrn.pdist.shared.model.VersionedValue;
+import br.ufrn.pdist.shared.version.VersionClock;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class AccountVersioningService {
     private final ConcurrentHashMap<String, Account> accounts = new ConcurrentHashMap<>();
-    private final AtomicLong versionClock = new AtomicLong(0);
+    private final VersionClock versionClock = new VersionClock();
 
     public Account createAccount(String accountId, BigDecimal initialBalance) {
-        long initialVersion = versionClock.incrementAndGet();
+        long initialVersion = versionClock.nextVersion();
         Account account = new Account(
                 accountId,
                 List.of(new VersionedValue<>(initialVersion, initialBalance))
@@ -38,7 +38,7 @@ public class AccountVersioningService {
             if (current == null) {
                 throw new NoSuchElementException("account not found: " + id);
             }
-            long version = versionClock.incrementAndGet();
+            long version = versionClock.nextVersion();
             Account appended = current.appendBalance(version, newBalance);
             logVersionCreation(accountId, version, newBalance);
             return appended;

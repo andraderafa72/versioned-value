@@ -1,4 +1,4 @@
-package br.ufrn.pdist.account.domain;
+package br.ufrn.pdist.shared.model;
 
 import java.util.Objects;
 

@@ -1,5 +1,6 @@
 package br.ufrn.pdist.account.domain;
 
+import br.ufrn.pdist.shared.model.VersionedValue;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;

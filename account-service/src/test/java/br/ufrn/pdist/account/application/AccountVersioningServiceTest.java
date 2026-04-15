@@ -1,7 +1,7 @@
 package br.ufrn.pdist.account.application;
 
 import br.ufrn.pdist.account.domain.Account;
-import br.ufrn.pdist.account.domain.VersionedValue;
+import br.ufrn.pdist.shared.model.VersionedValue;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

@@ -11,8 +11,8 @@ import java.util.Map;
 final class GatewayRoutingConfig {
 
     private static final String DEFAULT_HOST = "127.0.0.1";
-    private static final List<String> DEFAULT_ACCOUNT_ENDPOINTS = List.of("127.0.0.1:8081", "127.0.0.1:8083");
-    private static final List<String> DEFAULT_TRANSACTION_ENDPOINTS = List.of("127.0.0.1:8082", "127.0.0.1:8084");
+    private static final List<String> DEFAULT_ACCOUNT_ENDPOINTS = List.of("127.0.0.1:8081", "127.0.0.1:8082");
+    private static final List<String> DEFAULT_TRANSACTION_ENDPOINTS = List.of("127.0.0.1:8083", "127.0.0.1:8084");
     private final Map<ServiceName, List<Instance>> serviceRegistry;
 
     private GatewayRoutingConfig(Map<ServiceName, List<Instance>> serviceRegistry) {

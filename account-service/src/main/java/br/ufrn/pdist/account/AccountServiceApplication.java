@@ -1,13 +1,11 @@
 package br.ufrn.pdist.account;
 
+import br.ufrn.pdist.account.application.AccountRequestHandler;
 import br.ufrn.pdist.shared.boot.StartupLogger;
 import br.ufrn.pdist.shared.config.StartupConfig;
-import br.ufrn.pdist.shared.contracts.Request;
-import br.ufrn.pdist.shared.contracts.Response;
 import br.ufrn.pdist.shared.contracts.ServiceName;
 import br.ufrn.pdist.shared.transport.TransportFactory;
 import br.ufrn.pdist.shared.transport.TransportLayer;
-import java.util.Map;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -21,32 +19,12 @@ public class AccountServiceApplication {
     }
 
     @Bean
-    CommandLineRunner accountStartupRunner() {
+    CommandLineRunner accountStartupRunner(AccountRequestHandler handler) {
         return args -> {
             StartupConfig config = StartupConfig.fromArgs(args, 8081, "account-1");
             StartupLogger.logStartup(ServiceName.ACCOUNT, config);
             TransportLayer transport = TransportFactory.create(config.protocol());
-            transport.startServer(config.port(), AccountServiceApplication::handleRequest);
+            transport.startServer(config.port(), handler::handle);
         };
-    }
-
-    private static Response handleRequest(Request request) {
-        if (!isGatewayForwarded(request.payload())) {
-            return new Response(
-                    403,
-                    "direct communication blocked; use gateway",
-                    Map.of("requestId", request.requestId(), "message", "direct communication blocked; use gateway")
-            );
-        }
-        return new Response(200, "account-service request processed", Map.of("requestId", request.requestId()));
-    }
-
-    private static boolean isGatewayForwarded(Map<String, Object> payload) {
-        if (payload == null) {
-            return false;
-        }
-        Object gatewayForwarded = payload.get("gatewayForwarded");
-        Object sourceService = payload.get("sourceService");
-        return Boolean.TRUE.equals(gatewayForwarded) && ServiceName.GATEWAY.name().equals(sourceService);
     }
 }

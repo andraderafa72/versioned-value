@@ -27,6 +27,8 @@ cd "$SCRIPT_DIR"
 MAVEN_OPTS_LOCAL_REPO="-Dmaven.repo.local=$SCRIPT_DIR/.m2/repository"
 LOG_DIR="$SCRIPT_DIR/logs"
 GATEWAY_ROUTING_ARGS="${GATEWAY_ROUTING_ARGS:-}"
+ACCOUNT_ENDPOINTS="${ACCOUNT_INSTANCES:-127.0.0.1:8081,127.0.0.1:8082}"
+TRANSACTION_ENDPOINTS="${TRANSACTION_INSTANCES:-127.0.0.1:8083,127.0.0.1:8084}"
 mkdir -p "$LOG_DIR"
 
 PIDS=()
@@ -64,27 +66,45 @@ echo "[INFO] Subindo apps com protocolo: $PROTOCOL"
 free_port_if_busy 8080
 free_port_if_busy 8081
 free_port_if_busy 8082
+free_port_if_busy 8083
+free_port_if_busy 8084
 
 echo "[INFO] Compilando e instalando shared-core no repositorio local..."
 mvn -q $MAVEN_OPTS_LOCAL_REPO -pl shared-core -am -DskipTests install
 
 echo "[INFO] Iniciando Gateway..."
+if [[ -z "${GATEWAY_ROUTING_ARGS// }" ]]; then
+  GATEWAY_ROUTING_ARGS="--account.instances=$ACCOUNT_ENDPOINTS --transaction.instances=$TRANSACTION_ENDPOINTS"
+fi
+
 mvn -q $MAVEN_OPTS_LOCAL_REPO -pl gateway spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL $GATEWAY_ROUTING_ARGS" \
   > "$LOG_DIR/gateway.log" 2>&1 &
 PIDS+=("$!")
 echo "[INFO] Logs Gateway: $LOG_DIR/gateway.log"
 
-echo "[INFO] Iniciando Account Service..."
-mvn -q $MAVEN_OPTS_LOCAL_REPO -pl account-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL" \
-  > "$LOG_DIR/account-service.log" 2>&1 &
+echo "[INFO] Iniciando Account Service (instancia 1 na porta 8081)..."
+mvn -q $MAVEN_OPTS_LOCAL_REPO -pl account-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8081 --instance-id=account-1" \
+  > "$LOG_DIR/account-service-1.log" 2>&1 &
 PIDS+=("$!")
-echo "[INFO] Logs Account Service: $LOG_DIR/account-service.log"
+echo "[INFO] Logs Account Service 1: $LOG_DIR/account-service-1.log"
 
-echo "[INFO] Iniciando Transaction Service..."
-mvn -q $MAVEN_OPTS_LOCAL_REPO -pl transaction-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL" \
-  > "$LOG_DIR/transaction-service.log" 2>&1 &
+echo "[INFO] Iniciando Account Service (instancia 2 na porta 8082)..."
+mvn -q $MAVEN_OPTS_LOCAL_REPO -pl account-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8082 --instance-id=account-2" \
+  > "$LOG_DIR/account-service-2.log" 2>&1 &
 PIDS+=("$!")
-echo "[INFO] Logs Transaction Service: $LOG_DIR/transaction-service.log"
+echo "[INFO] Logs Account Service 2: $LOG_DIR/account-service-2.log"
+
+echo "[INFO] Iniciando Transaction Service (instancia 1 na porta 8083)..."
+mvn -q $MAVEN_OPTS_LOCAL_REPO -pl transaction-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8083 --instance-id=transaction-1" \
+  > "$LOG_DIR/transaction-service-1.log" 2>&1 &
+PIDS+=("$!")
+echo "[INFO] Logs Transaction Service 1: $LOG_DIR/transaction-service-1.log"
+
+echo "[INFO] Iniciando Transaction Service (instancia 2 na porta 8084)..."
+mvn -q $MAVEN_OPTS_LOCAL_REPO -pl transaction-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8084 --instance-id=transaction-2" \
+  > "$LOG_DIR/transaction-service-2.log" 2>&1 &
+PIDS+=("$!")
+echo "[INFO] Logs Transaction Service 2: $LOG_DIR/transaction-service-2.log"
 
 echo "[INFO] Processos iniciados. Ctrl+C para parar todos."
 
