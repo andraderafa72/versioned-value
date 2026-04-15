@@ -52,24 +52,28 @@ final class UdpRegistrationListener {
         String content = new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8);
         try {
             Map<String, Object> message = OBJECT_MAPPER.readValue(content, REGISTER_TYPE);
-            Instance instance = parseRegisterMessage(message);
-            if (instance == null) {
+            ParsedDiscoveryMessage parsedMessage = parseDiscoveryMessage(message);
+            if (parsedMessage == null) {
                 logMalformed(content);
                 return;
             }
-            serviceRegistry.register(instance);
+            if ("REGISTER".equals(parsedMessage.type())) {
+                serviceRegistry.register(parsedMessage.instance());
+                return;
+            }
+            serviceRegistry.heartbeat(parsedMessage.instance(), parsedMessage.timestampMillis());
         } catch (IOException exception) {
             logMalformed(content);
         }
     }
 
-    private static Instance parseRegisterMessage(Map<String, Object> message) {
+    private static ParsedDiscoveryMessage parseDiscoveryMessage(Map<String, Object> message) {
         Object type = message.get("type");
         Object service = message.get("service");
         Object host = message.get("host");
         Object port = message.get("port");
         Object instanceId = message.get("instanceId");
-        if (!(type instanceof String rawType) || !"REGISTER".equals(rawType)) {
+        if (!(type instanceof String rawType) || (!"REGISTER".equals(rawType) && !"HEARTBEAT".equals(rawType))) {
             return null;
         }
         if (!(service instanceof String rawService) || !(host instanceof String rawHost)
@@ -84,10 +88,26 @@ final class UdpRegistrationListener {
 
         try {
             ServiceName serviceName = ServiceName.valueOf(rawService.trim().toUpperCase());
-            return new Instance(rawInstanceId.trim(), serviceName, rawHost.trim(), parsedPort);
+            Instance instance = new Instance(rawInstanceId.trim(), serviceName, rawHost.trim(), parsedPort);
+            long timestamp = parseTimestamp(message.get("timestamp"));
+            return new ParsedDiscoveryMessage(rawType, instance, timestamp);
         } catch (IllegalArgumentException exception) {
             return null;
         }
+    }
+
+    private static long parseTimestamp(Object timestampValue) {
+        if (timestampValue instanceof Number number) {
+            return number.longValue();
+        }
+        if (timestampValue instanceof String rawTimestamp) {
+            try {
+                return Long.parseLong(rawTimestamp.trim());
+            } catch (NumberFormatException ignored) {
+                return System.currentTimeMillis();
+            }
+        }
+        return System.currentTimeMillis();
     }
 
     private static Integer parsePort(Object portValue) {
@@ -128,5 +148,8 @@ final class UdpRegistrationListener {
             }
         }
         return DEFAULT_REGISTRATION_PORT;
+    }
+
+    private record ParsedDiscoveryMessage(String type, Instance instance, long timestampMillis) {
     }
 }

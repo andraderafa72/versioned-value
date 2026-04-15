@@ -8,6 +8,10 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 public final class UdpRegistrationClient {
@@ -15,6 +19,10 @@ public final class UdpRegistrationClient {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String DEFAULT_GATEWAY_HOST = "127.0.0.1";
     private static final int DEFAULT_GATEWAY_REGISTRATION_PORT = 8090;
+    private static final long DEFAULT_HEARTBEAT_INTERVAL_MILLIS = 2000L;
+    private static final ScheduledExecutorService HEARTBEAT_EXECUTOR = Executors.newSingleThreadScheduledExecutor(
+            daemonFactory("udp-heartbeat-sender")
+    );
 
     private UdpRegistrationClient() {
     }
@@ -50,6 +58,62 @@ public final class UdpRegistrationClient {
                     exception.getMessage()
             );
         }
+        scheduleHeartbeat(serviceName, startupConfig, target);
+    }
+
+    private static void scheduleHeartbeat(ServiceName serviceName, StartupConfig startupConfig, RegistrationTarget target) {
+        long intervalMillis = resolveHeartbeatIntervalMillis();
+        HEARTBEAT_EXECUTOR.scheduleAtFixedRate(
+                () -> sendHeartbeat(serviceName, startupConfig, target),
+                intervalMillis,
+                intervalMillis,
+                TimeUnit.MILLISECONDS
+        );
+    }
+
+    private static void sendHeartbeat(ServiceName serviceName, StartupConfig startupConfig, RegistrationTarget target) {
+        Map<String, Object> heartbeatMessage = new LinkedHashMap<>();
+        heartbeatMessage.put("type", "HEARTBEAT");
+        heartbeatMessage.put("service", serviceName.name());
+        heartbeatMessage.put("host", startupConfig.host());
+        heartbeatMessage.put("port", startupConfig.port());
+        heartbeatMessage.put("instanceId", startupConfig.instanceId());
+        heartbeatMessage.put("timestamp", System.currentTimeMillis());
+
+        try (DatagramSocket socket = new DatagramSocket()) {
+            byte[] payload = OBJECT_MAPPER.writeValueAsBytes(heartbeatMessage);
+            InetAddress gatewayAddress = InetAddress.getByName(target.host());
+            DatagramPacket packet = new DatagramPacket(payload, payload.length, gatewayAddress, target.port());
+            socket.send(packet);
+        } catch (IOException exception) {
+            System.err.printf(
+                    "event=heartbeat-send-error service=%s instanceId=%s message=%s%n",
+                    serviceName,
+                    startupConfig.instanceId(),
+                    exception.getMessage()
+            );
+        }
+    }
+
+    private static long resolveHeartbeatIntervalMillis() {
+        String envValue = System.getenv("GATEWAY_HEARTBEAT_INTERVAL_MS");
+        if (envValue == null || envValue.isBlank()) {
+            return DEFAULT_HEARTBEAT_INTERVAL_MILLIS;
+        }
+        try {
+            long parsed = Long.parseLong(envValue.trim());
+            return parsed > 0 ? parsed : DEFAULT_HEARTBEAT_INTERVAL_MILLIS;
+        } catch (NumberFormatException ignored) {
+            return DEFAULT_HEARTBEAT_INTERVAL_MILLIS;
+        }
+    }
+
+    private static ThreadFactory daemonFactory(String name) {
+        return runnable -> {
+            Thread thread = new Thread(runnable, name);
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 
     private record RegistrationTarget(String host, int port) {

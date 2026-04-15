@@ -25,8 +25,10 @@ public class GatewayApplication {
             TransportLayer transport = TransportFactory.create(config.protocol());
             GatewayRoutingConfig routingConfig = GatewayRoutingConfig.fromArgs(args);
             GatewayServiceRegistry serviceRegistry = new GatewayServiceRegistry(routingConfig.serviceRegistry());
+            GatewayRetryPolicy retryPolicy = GatewayRetryPolicy.fromArgs(args);
+            serviceRegistry.startHeartbeatMonitor(args);
             new UdpRegistrationListener(serviceRegistry).start(args);
-            GatewayRouter router = new GatewayRouter(transport, serviceRegistry);
+            GatewayRouter router = new GatewayRouter(transport, serviceRegistry, retryPolicy);
             transport.startServer(config.port(), router::route);
         };
     }
