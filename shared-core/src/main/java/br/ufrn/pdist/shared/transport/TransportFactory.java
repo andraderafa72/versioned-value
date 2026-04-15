@@ -14,6 +14,9 @@ public final class TransportFactory {
         if (protocol == Protocol.HTTP) {
             return new HttpTransport();
         }
+        if (protocol == Protocol.GRPC) {
+            return new GrpcTransport();
+        }
         return new NoopTransport(protocol);
     }
 }

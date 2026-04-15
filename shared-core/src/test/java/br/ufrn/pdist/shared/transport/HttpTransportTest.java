@@ -5,97 +5,76 @@ import br.ufrn.pdist.shared.contracts.Request;
 import br.ufrn.pdist.shared.contracts.Response;
 import br.ufrn.pdist.shared.contracts.ServiceName;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HttpTransportTest {
-
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     @Test
     void shouldRoundTripPostRequestAndResponse() throws Exception {
         int port = findFreePort();
         HttpTransport transport = new HttpTransport();
-        transport.startServer(port, request ->
-                new Response(200, "ok", Map.of("echoAction", request.action(), "message", "ok")));
-
+        transport.startServer(port, request -> new Response(200, "ok", Map.of("echoAction", request.action(), "message", "ok")));
         Thread.sleep(150);
 
-        Request request = new Request("h1", "POST /accounts", Map.of("requestId", "h1", "amount", 50));
-        Instance target = new Instance("i1", ServiceName.ACCOUNT, "127.0.0.1", port);
-
-        Response response = transport.send(request, target);
+        Response response = transport.send(
+                new Request("h1", "POST /accounts", Map.of("requestId", "h1", "amount", 50)),
+                new Instance("i1", ServiceName.ACCOUNT, "127.0.0.1", port)
+        );
 
         assertEquals(200, response.statusCode());
-        assertEquals("ok", response.message());
         assertEquals("POST /accounts", response.payload().get("echoAction"));
         assertEquals("h1", response.payload().get("requestId"));
     }
 
     @Test
-    void shouldAcceptExternalRawHttpGetRequest() throws Exception {
+    void shouldAcceptRawHttp2FramesFromExternalClient() throws Exception {
         int port = findFreePort();
         HttpTransport transport = new HttpTransport();
-        transport.startServer(port, request ->
-                new Response(200, "ok", Map.of("action", request.action(), "message", "ok")));
-
+        transport.startServer(port, request -> new Response(200, "ok", Map.of("action", request.action(), "message", "ok")));
         Thread.sleep(150);
 
         try (Socket socket = new Socket("127.0.0.1", port);
-             Writer writer = new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8);
-             BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
-            writer.write("GET /health HTTP/1.1\r\n");
-            writer.write("Host: localhost\r\n");
-            writer.write("Connection: close\r\n");
-            writer.write("\r\n");
-            writer.flush();
+             BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream());
+             BufferedInputStream input = new BufferedInputStream(socket.getInputStream())) {
+            Map<String, String> headers = new LinkedHashMap<>();
+            headers.put(":method", "GET");
+            headers.put(":path", "/health");
+            headers.put("content-type", "application/json");
 
-            String statusLine = reader.readLine();
-            assertTrue(statusLine.startsWith("HTTP/1.1 200"));
+            Http2Wire.writeFrame(output, 1, Http2Wire.FRAME_HEADERS, Http2Wire.encodeHeaders(headers));
+            Http2Wire.writeFrame(output, 1, Http2Wire.FRAME_DATA, "{}".getBytes());
+            output.flush();
 
-            String line;
-            int contentLength = 0;
-            while (!(line = reader.readLine()).isEmpty()) {
-                if (line.startsWith("Content-Length:")) {
-                    contentLength = Integer.parseInt(line.substring("Content-Length:".length()).trim());
-                }
-            }
-
-            char[] bodyChars = new char[contentLength];
-            int read = reader.read(bodyChars);
-            String body = new String(bodyChars, 0, read);
-            Map<String, Object> payload = OBJECT_MAPPER.readValue(body, Map.class);
-            assertEquals("GET /health", payload.get("action"));
+            Http2Wire.Frame h = Http2Wire.readFrame(input);
+            Http2Wire.Frame d = Http2Wire.readFrame(input);
+            assertEquals("200", Http2Wire.decodeHeaders(h.payload()).get(":status"));
+            assertEquals("GET /health", OBJECT_MAPPER.readValue(d.payload(), Map.class).get("action"));
         }
     }
 
     @Test
-    void shouldReturnControlledErrorForInvalidRequest() throws Exception {
+    void shouldReturnControlledErrorForInvalidFrameSequence() throws Exception {
         int port = findFreePort();
         HttpTransport transport = new HttpTransport();
         transport.startServer(port, request -> new Response(200, "ok", Map.of("message", "ok")));
-
         Thread.sleep(150);
 
         try (Socket socket = new Socket("127.0.0.1", port);
-             Writer writer = new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8);
-             BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
-            writer.write("NOT A VALID REQUEST\r\n");
-            writer.write("\r\n");
-            writer.flush();
-
-            String statusLine = reader.readLine();
-            assertTrue(statusLine.startsWith("HTTP/1.1 400"));
+             BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream());
+             BufferedInputStream input = new BufferedInputStream(socket.getInputStream())) {
+            Http2Wire.writeFrame(output, 1, Http2Wire.FRAME_DATA, "invalid".getBytes());
+            output.flush();
+            Http2Wire.Frame h = Http2Wire.readFrame(input);
+            assertEquals("400", Http2Wire.decodeHeaders(h.payload()).get(":status"));
         }
     }
 
