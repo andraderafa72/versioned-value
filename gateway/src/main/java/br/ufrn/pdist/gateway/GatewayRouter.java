@@ -14,13 +14,13 @@ final class GatewayRouter {
     private static final String GATEWAY_FORWARDED_KEY = "gatewayForwarded";
     private static final String SOURCE_SERVICE_KEY = "sourceService";
     private final TransportLayer transport;
-    private final Map<ServiceName, List<Instance>> serviceRegistry;
+    private final GatewayServiceRegistry serviceRegistry;
 
     GatewayRouter(TransportLayer transport) {
-        this(transport, GatewayRoutingConfig.fromArgs(new String[0]).serviceRegistry());
+        this(transport, new GatewayServiceRegistry(GatewayRoutingConfig.fromArgs(new String[0]).serviceRegistry()));
     }
 
-    GatewayRouter(TransportLayer transport, Map<ServiceName, List<Instance>> serviceRegistry) {
+    GatewayRouter(TransportLayer transport, GatewayServiceRegistry serviceRegistry) {
         this.transport = transport;
         this.serviceRegistry = serviceRegistry;
     }
@@ -30,7 +30,7 @@ final class GatewayRouter {
             return deterministicError(400, "target service is required", request.requestId(), null);
         }
 
-        List<Instance> instances = serviceRegistry.get(request.service());
+        List<Instance> instances = serviceRegistry.instancesFor(request.service());
         if (instances == null || instances.isEmpty()) {
             return deterministicError(404, "service not found", request.requestId(), request.service());
         }

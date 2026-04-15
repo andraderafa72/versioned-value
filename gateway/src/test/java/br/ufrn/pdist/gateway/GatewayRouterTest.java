@@ -17,9 +17,12 @@ class GatewayRouterTest {
     @Test
     void shouldRouteRequestToSelectedServiceInstance() {
         StubTransport transport = new StubTransport();
+        GatewayServiceRegistry serviceRegistry = new GatewayServiceRegistry(
+                Map.of(ServiceName.ACCOUNT, List.of(new Instance("account-1", ServiceName.ACCOUNT, "127.0.0.1", 8081)))
+        );
         GatewayRouter router = new GatewayRouter(
                 transport,
-                Map.of(ServiceName.ACCOUNT, List.of(new Instance("account-1", ServiceName.ACCOUNT, "127.0.0.1", 8081)))
+                serviceRegistry
         );
 
         Request request = new Request("r1", ServiceName.ACCOUNT, "POST /accounts", Map.of("amount", 100));
@@ -37,7 +40,7 @@ class GatewayRouterTest {
     @Test
     void shouldReturnDeterministicErrorForUnknownService() {
         StubTransport transport = new StubTransport();
-        GatewayRouter router = new GatewayRouter(transport, Map.of());
+        GatewayRouter router = new GatewayRouter(transport, new GatewayServiceRegistry(Map.of()));
 
         Request request = new Request("r2", ServiceName.TRANSACTION, "POST /transactions", Map.of());
         Response response = router.route(request);
@@ -52,9 +55,12 @@ class GatewayRouterTest {
     void shouldReturnServiceUnavailableWhenDownstreamFails() {
         StubTransport transport = new StubTransport();
         transport.nextResponse = new Response(504, "Transport timeout", Map.of("requestId", "r3"));
+        GatewayServiceRegistry serviceRegistry = new GatewayServiceRegistry(
+                Map.of(ServiceName.TRANSACTION, List.of(new Instance("tx-1", ServiceName.TRANSACTION, "127.0.0.1", 8082)))
+        );
         GatewayRouter router = new GatewayRouter(
                 transport,
-                Map.of(ServiceName.TRANSACTION, List.of(new Instance("tx-1", ServiceName.TRANSACTION, "127.0.0.1", 8082)))
+                serviceRegistry
         );
 
         Request request = new Request("r3", ServiceName.TRANSACTION, "POST /transactions", Map.of());

@@ -24,7 +24,9 @@ public class GatewayApplication {
             StartupLogger.logStartup(ServiceName.GATEWAY, config);
             TransportLayer transport = TransportFactory.create(config.protocol());
             GatewayRoutingConfig routingConfig = GatewayRoutingConfig.fromArgs(args);
-            GatewayRouter router = new GatewayRouter(transport, routingConfig.serviceRegistry());
+            GatewayServiceRegistry serviceRegistry = new GatewayServiceRegistry(routingConfig.serviceRegistry());
+            new UdpRegistrationListener(serviceRegistry).start(args);
+            GatewayRouter router = new GatewayRouter(transport, serviceRegistry);
             transport.startServer(config.port(), router::route);
         };
     }

@@ -4,6 +4,7 @@ import br.ufrn.pdist.account.application.AccountRequestHandler;
 import br.ufrn.pdist.shared.boot.StartupLogger;
 import br.ufrn.pdist.shared.config.StartupConfig;
 import br.ufrn.pdist.shared.contracts.ServiceName;
+import br.ufrn.pdist.shared.discovery.UdpRegistrationClient;
 import br.ufrn.pdist.shared.transport.TransportFactory;
 import br.ufrn.pdist.shared.transport.TransportLayer;
 import org.springframework.boot.CommandLineRunner;
@@ -23,6 +24,7 @@ public class AccountServiceApplication {
         return args -> {
             StartupConfig config = StartupConfig.fromArgs(args, 8081, "account-1");
             StartupLogger.logStartup(ServiceName.ACCOUNT, config);
+            UdpRegistrationClient.registerAtGateway(ServiceName.ACCOUNT, config, args);
             TransportLayer transport = TransportFactory.create(config.protocol());
             transport.startServer(config.port(), handler::handle);
         };
