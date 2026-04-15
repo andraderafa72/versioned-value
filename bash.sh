@@ -26,6 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 MAVEN_OPTS_LOCAL_REPO="-Dmaven.repo.local=$SCRIPT_DIR/.m2/repository"
 LOG_DIR="$SCRIPT_DIR/logs"
+GATEWAY_ROUTING_ARGS="${GATEWAY_ROUTING_ARGS:-}"
 mkdir -p "$LOG_DIR"
 
 PIDS=()
@@ -68,7 +69,7 @@ echo "[INFO] Compilando e instalando shared-core no repositorio local..."
 mvn -q $MAVEN_OPTS_LOCAL_REPO -pl shared-core -am -DskipTests install
 
 echo "[INFO] Iniciando Gateway..."
-mvn -q $MAVEN_OPTS_LOCAL_REPO -pl gateway spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL" \
+mvn -q $MAVEN_OPTS_LOCAL_REPO -pl gateway spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL $GATEWAY_ROUTING_ARGS" \
   > "$LOG_DIR/gateway.log" 2>&1 &
 PIDS+=("$!")
 echo "[INFO] Logs Gateway: $LOG_DIR/gateway.log"

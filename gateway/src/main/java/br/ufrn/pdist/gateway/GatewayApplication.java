@@ -2,12 +2,9 @@ package br.ufrn.pdist.gateway;
 
 import br.ufrn.pdist.shared.boot.StartupLogger;
 import br.ufrn.pdist.shared.config.StartupConfig;
-import br.ufrn.pdist.shared.contracts.Request;
-import br.ufrn.pdist.shared.contracts.Response;
 import br.ufrn.pdist.shared.contracts.ServiceName;
 import br.ufrn.pdist.shared.transport.TransportFactory;
 import br.ufrn.pdist.shared.transport.TransportLayer;
-import java.util.Map;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -26,11 +23,9 @@ public class GatewayApplication {
             StartupConfig config = StartupConfig.fromArgs(args, 8080, "gateway-1");
             StartupLogger.logStartup(ServiceName.GATEWAY, config);
             TransportLayer transport = TransportFactory.create(config.protocol());
-            transport.startServer(config.port(), GatewayApplication::handleRequest);
+            GatewayRoutingConfig routingConfig = GatewayRoutingConfig.fromArgs(args);
+            GatewayRouter router = new GatewayRouter(transport, routingConfig.serviceRegistry());
+            transport.startServer(config.port(), router::route);
         };
-    }
-
-    private static Response handleRequest(Request request) {
-        return new Response(200, "gateway request processed", Map.of("requestId", request.requestId()));
     }
 }

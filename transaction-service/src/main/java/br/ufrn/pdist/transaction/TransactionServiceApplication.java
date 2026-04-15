@@ -31,6 +31,22 @@ public class TransactionServiceApplication {
     }
 
     private static Response handleRequest(Request request) {
+        if (!isGatewayForwarded(request.payload())) {
+            return new Response(
+                    403,
+                    "direct communication blocked; use gateway",
+                    Map.of("requestId", request.requestId(), "message", "direct communication blocked; use gateway")
+            );
+        }
         return new Response(200, "transaction-service request processed", Map.of("requestId", request.requestId()));
+    }
+
+    private static boolean isGatewayForwarded(Map<String, Object> payload) {
+        if (payload == null) {
+            return false;
+        }
+        Object gatewayForwarded = payload.get("gatewayForwarded");
+        Object sourceService = payload.get("sourceService");
+        return Boolean.TRUE.equals(gatewayForwarded) && ServiceName.GATEWAY.name().equals(sourceService);
     }
 }
