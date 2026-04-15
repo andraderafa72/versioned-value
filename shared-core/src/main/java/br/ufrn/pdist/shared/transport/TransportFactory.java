@@ -11,6 +11,9 @@ public final class TransportFactory {
         if (protocol == Protocol.TCP) {
             return new TcpTransport();
         }
+        if (protocol == Protocol.HTTP) {
+            return new HttpTransport();
+        }
         return new NoopTransport(protocol);
     }
 }

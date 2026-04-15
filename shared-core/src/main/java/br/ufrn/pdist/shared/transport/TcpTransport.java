@@ -24,18 +24,25 @@ public final class TcpTransport implements TransportLayer {
     private static final int CONNECT_TIMEOUT_MILLIS = 2_000;
     private static final int READ_TIMEOUT_MILLIS = 2_000;
 
+    @FunctionalInterface
+    interface ClientSocketOperation<T> {
+        T execute(Socket socket) throws IOException;
+    }
+
+    @FunctionalInterface
+    interface ServerSocketOperation {
+        void execute(Socket socket) throws IOException;
+    }
+
     @Override
     public void startServer(int port, RequestHandler handler) {
-        Thread acceptThread = new Thread(() -> runServer(port, handler), "tcp-server-" + port);
-        acceptThread.start();
+        startSocketServer(port, "tcp", socket -> handleConnection(socket, handler));
     }
 
     @Override
     public Response send(Request request, Instance target) {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(target.host(), target.port()), CONNECT_TIMEOUT_MILLIS);
-            socket.setSoTimeout(READ_TIMEOUT_MILLIS);
-
+        try {
+            return executeClient(target, socket -> {
             try (BufferedWriter writer = new BufferedWriter(
                     new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
                  BufferedReader reader = new BufferedReader(
@@ -50,6 +57,7 @@ public final class TcpTransport implements TransportLayer {
                 }
                 return OBJECT_MAPPER.readValue(rawResponse, Response.class);
             }
+            });
         } catch (SocketTimeoutException exception) {
             return transportError(504, "Transport timeout", request.requestId());
         } catch (JsonProcessingException exception) {
@@ -59,20 +67,44 @@ public final class TcpTransport implements TransportLayer {
         }
     }
 
-    private void runServer(int port, RequestHandler handler) {
+    <T> T executeClient(Instance target, ClientSocketOperation<T> operation) throws IOException {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(target.host(), target.port()), CONNECT_TIMEOUT_MILLIS);
+            socket.setSoTimeout(READ_TIMEOUT_MILLIS);
+            return operation.execute(socket);
+        }
+    }
+
+    void startSocketServer(int port, String transportName, ServerSocketOperation operation) {
+        Thread acceptThread = new Thread(() -> runServer(port, transportName, operation), transportName + "-server-" + port);
+        acceptThread.setDaemon(true);
+        acceptThread.start();
+    }
+
+    private void runServer(int port, String transportName, ServerSocketOperation operation) {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
-            System.out.printf("transport=tcp event=server-started port=%d%n", port);
+            System.out.printf("transport=%s event=server-started port=%d%n", transportName, port);
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 Thread worker = new Thread(
-                        () -> handleConnection(clientSocket, handler),
-                        "tcp-connection-" + clientSocket.getPort()
+                        () -> {
+                            try {
+                                clientSocket.setSoTimeout(READ_TIMEOUT_MILLIS);
+                                operation.execute(clientSocket);
+                            } catch (IOException exception) {
+                                String remote = clientSocket.getRemoteSocketAddress().toString();
+                                System.out.printf("transport=%s event=io-failure remote=%s error=\"%s\"%n",
+                                        transportName, remote, exception.getMessage());
+                            }
+                        },
+                        transportName + "-connection-" + clientSocket.getPort()
                 );
                 worker.setDaemon(true);
                 worker.start();
             }
         } catch (IOException exception) {
-            System.out.printf("transport=tcp event=server-failure port=%d error=\"%s\"%n", port, exception.getMessage());
+            System.out.printf("transport=%s event=server-failure port=%d error=\"%s\"%n",
+                    transportName, port, exception.getMessage());
         }
     }
 
