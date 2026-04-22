@@ -2,8 +2,12 @@ package br.ufrn.pdist.transaction;
 
 import br.ufrn.pdist.transaction.application.TransactionRequestHandler;
 import br.ufrn.pdist.shared.boot.StartupLogger;
+import br.ufrn.pdist.shared.config.Protocol;
 import br.ufrn.pdist.shared.config.StartupConfig;
+import br.ufrn.pdist.shared.contracts.Request;
+import br.ufrn.pdist.shared.contracts.RequestHandler;
 import br.ufrn.pdist.shared.contracts.ServiceName;
+import br.ufrn.pdist.shared.http.BankingHttpRoutes;
 import br.ufrn.pdist.shared.discovery.UdpRegistrationClient;
 import br.ufrn.pdist.shared.transport.TransportFactory;
 import br.ufrn.pdist.shared.transport.TransportLayer;
@@ -28,7 +32,17 @@ public class TransactionServiceApplication {
             TransportLayer transport = TransportFactory.create(config.protocol());
             GatewayTargetConfig gatewayTarget = GatewayTargetConfig.fromArgs(args);
             TransactionRequestHandler handler = new TransactionRequestHandler(transport, gatewayTarget.instance());
-            transport.startServer(config.port(), handler::handle);
+            RequestHandler pipeline = handler::handle;
+            if (config.protocol() == Protocol.HTTP) {
+                pipeline = (Request req) -> {
+                    Request mapped = BankingHttpRoutes.parseServiceRequest(ServiceName.TRANSACTION, req);
+                    if (mapped == null) {
+                        return BankingHttpRoutes.unknownRouteResponse(req);
+                    }
+                    return handler.handle(mapped);
+                };
+            }
+            transport.startServer(config.port(), pipeline);
         };
     }
 }

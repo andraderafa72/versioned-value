@@ -4,10 +4,12 @@ import br.ufrn.pdist.shared.contracts.Instance;
 import br.ufrn.pdist.shared.contracts.Request;
 import br.ufrn.pdist.shared.contracts.Response;
 import br.ufrn.pdist.shared.contracts.ServiceName;
+import br.ufrn.pdist.shared.logging.EventLog;
 import br.ufrn.pdist.shared.transport.TransportLayer;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 final class GatewayRouter {
 
@@ -37,62 +39,80 @@ final class GatewayRouter {
     }
 
     Response route(Request request) {
-        if (request.service() == null) {
-            return deterministicError(400, "target service is required", request.requestId(), null);
-        }
-
-        List<Instance> instances = serviceRegistry.instancesFor(request.service());
-        if (instances == null || instances.isEmpty()) {
-            return deterministicError(404, "service not found", request.requestId(), request.service());
-        }
-
-        Request forwarded = toForwardedRequest(request);
-        String previousInstanceId = null;
-        Response lastTransientResponse = null;
-        int maxAttempts = retryPolicy.maxAttempts();
-
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            List<Instance> healthyInstances = serviceRegistry.instancesFor(request.service());
-            if (healthyInstances.isEmpty()) {
-                break;
+        String requestId = normalizeRequestId(request);
+        try {
+            if (request.service() == null) {
+                return deterministicError(400, "target service is required", requestId, null);
             }
 
-            Instance selectedInstance = selectNextCandidate(
-                    request.requestId(),
+            List<Instance> instances = serviceRegistry.instancesFor(request.service());
+            if (instances == null || instances.isEmpty()) {
+                return deterministicError(404, "service not found", requestId, request.service());
+            }
+
+            Request forwarded = toForwardedRequest(request, requestId);
+            String previousInstanceId = null;
+            Response lastTransientResponse = null;
+            int maxAttempts = retryPolicy.maxAttempts();
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                List<Instance> healthyInstances = serviceRegistry.instancesFor(request.service());
+                if (healthyInstances.isEmpty()) {
+                    break;
+                }
+
+                Instance selectedInstance = selectNextCandidate(
+                        requestId,
+                        request.service(),
+                        previousInstanceId,
+                        healthyInstances.size()
+                );
+                if (selectedInstance == null) {
+                    break;
+                }
+
+                logRetryAttempt(requestId, request.service(), attempt, maxAttempts, selectedInstance, healthyInstances.size());
+                Response response = transport.send(forwarded, selectedInstance);
+
+                if (response == null) {
+                    response = deterministicError(502, "downstream returned null response", requestId, request.service());
+                }
+
+                if (!isTransientFailure(response)) {
+                    logRetryFinalResult(requestId, request.service(), response.statusCode(), attempt, false);
+                    return response;
+                }
+
+                lastTransientResponse = response;
+                logRetryFailure(requestId, request.service(), attempt, maxAttempts, selectedInstance, response);
+                previousInstanceId = selectedInstance.instanceId();
+
+                if (attempt < maxAttempts) {
+                    logRetryFallback(requestId, request.service(), selectedInstance, attempt + 1);
+                    backoff();
+                }
+            }
+
+            logRetryFinalResult(
+                    requestId,
                     request.service(),
-                    previousInstanceId,
-                    healthyInstances.size()
+                    lastTransientResponse == null ? 503 : lastTransientResponse.statusCode(),
+                    maxAttempts,
+                    true
             );
-            if (selectedInstance == null) {
-                break;
-            }
-
-            logRetryAttempt(request.requestId(), request.service(), attempt, maxAttempts, selectedInstance, healthyInstances.size());
-            Response response = transport.send(forwarded, selectedInstance);
-
-            if (!isTransientFailure(response)) {
-                logRetryFinalResult(request.requestId(), request.service(), response.statusCode(), attempt, false);
-                return response;
-            }
-
-            lastTransientResponse = response;
-            logRetryFailure(request.requestId(), request.service(), attempt, maxAttempts, selectedInstance, response);
-            previousInstanceId = selectedInstance.instanceId();
-
-            if (attempt < maxAttempts) {
-                logRetryFallback(request.requestId(), request.service(), selectedInstance, attempt + 1);
-                backoff();
-            }
+            return deterministicError(503, "service unavailable", requestId, request.service());
+        } catch (Exception exception) {
+            EventLog.printlnWithStackTrace(
+                    String.format(
+                            "event=routing-failure requestId=%s service=%s error=\"%s\"",
+                            requestId,
+                            request == null || request.service() == null ? "UNKNOWN" : request.service(),
+                            exception.getMessage()
+                    ),
+                    exception
+            );
+            return deterministicError(500, "gateway routing failure", requestId, request == null ? null : request.service());
         }
-
-        logRetryFinalResult(
-                request.requestId(),
-                request.service(),
-                lastTransientResponse == null ? 503 : lastTransientResponse.statusCode(),
-                maxAttempts,
-                true
-        );
-        return deterministicError(503, "service unavailable", request.requestId(), request.service());
     }
 
     private static Response deterministicError(
@@ -110,14 +130,22 @@ final class GatewayRouter {
         return new Response(statusCode, message, payload);
     }
 
-    private Request toForwardedRequest(Request request) {
+    private Request toForwardedRequest(Request request, String requestId) {
         Map<String, Object> forwardedPayload = new LinkedHashMap<>();
         if (request.payload() != null) {
             forwardedPayload.putAll(request.payload());
         }
+        forwardedPayload.putIfAbsent("requestId", requestId);
         forwardedPayload.put(GATEWAY_FORWARDED_KEY, true);
         forwardedPayload.put(SOURCE_SERVICE_KEY, ServiceName.GATEWAY.name());
-        return new Request(request.requestId(), request.service(), request.action(), forwardedPayload);
+        return new Request(requestId, request.service(), request.action(), forwardedPayload);
+    }
+
+    private static String normalizeRequestId(Request request) {
+        if (request == null || request.requestId() == null || request.requestId().isBlank()) {
+            return UUID.randomUUID().toString();
+        }
+        return request.requestId();
     }
 
     private Instance selectNextCandidate(

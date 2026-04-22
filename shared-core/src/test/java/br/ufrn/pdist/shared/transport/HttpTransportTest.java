@@ -5,11 +5,14 @@ import br.ufrn.pdist.shared.contracts.Request;
 import br.ufrn.pdist.shared.contracts.Response;
 import br.ufrn.pdist.shared.contracts.ServiceName;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.LinkedHashMap;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -22,8 +25,9 @@ class HttpTransportTest {
     void shouldRoundTripPostRequestAndResponse() throws Exception {
         int port = findFreePort();
         HttpTransport transport = new HttpTransport();
-        transport.startServer(port, request -> new Response(200, "ok", Map.of("echoAction", request.action(), "message", "ok")));
-        Thread.sleep(150);
+        transport.startServer(port, request -> new Response(200, "ok",
+                Map.of("echoAction", request.action(), "message", "ok")));
+        Thread.sleep(200);
 
         Response response = transport.send(
                 new Request("h1", "POST /accounts", Map.of("requestId", "h1", "amount", 50)),
@@ -36,45 +40,69 @@ class HttpTransportTest {
     }
 
     @Test
-    void shouldAcceptRawHttp2FramesFromExternalClient() throws Exception {
+    void shouldRoundTripRawGetRequest() throws Exception {
         int port = findFreePort();
         HttpTransport transport = new HttpTransport();
-        transport.startServer(port, request -> new Response(200, "ok", Map.of("action", request.action(), "message", "ok")));
-        Thread.sleep(150);
+        transport.startServer(port, request -> new Response(200, "ok",
+                Map.of("action", request.action(), "message", "ok")));
+        Thread.sleep(200);
 
         try (Socket socket = new Socket("127.0.0.1", port);
-             BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream());
-             BufferedInputStream input = new BufferedInputStream(socket.getInputStream())) {
-            Map<String, String> headers = new LinkedHashMap<>();
-            headers.put(":method", "GET");
-            headers.put(":path", "/health");
-            headers.put("content-type", "application/json");
+             OutputStream out = socket.getOutputStream();
+             BufferedReader reader = new BufferedReader(
+                     new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
 
-            Http2Wire.writeFrame(output, 1, Http2Wire.FRAME_HEADERS, Http2Wire.encodeHeaders(headers));
-            Http2Wire.writeFrame(output, 1, Http2Wire.FRAME_DATA, "{}".getBytes());
-            output.flush();
+            PrintWriter writer = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8), false);
+            writer.printf("GET /health HTTP/1.1\r\n");
+            writer.printf("Host: 127.0.0.1:%d\r\n", port);
+            writer.printf("Content-Length: 0\r\n");
+            writer.printf("Connection: close\r\n");
+            writer.printf("\r\n");
+            writer.flush();
 
-            Http2Wire.Frame h = Http2Wire.readFrame(input);
-            Http2Wire.Frame d = Http2Wire.readFrame(input);
-            assertEquals("200", Http2Wire.decodeHeaders(h.payload()).get(":status"));
-            assertEquals("GET /health", OBJECT_MAPPER.readValue(d.payload(), Map.class).get("action"));
+            String statusLine = reader.readLine();
+            assertEquals("HTTP/1.1 200 OK", statusLine);
+
+            int contentLength = 0;
+            String line;
+            while ((line = reader.readLine()) != null && !line.isEmpty()) {
+                if (line.toLowerCase().startsWith("content-length:")) {
+                    contentLength = Integer.parseInt(line.substring(15).trim());
+                }
+            }
+            char[] buf = new char[contentLength];
+            reader.read(buf, 0, contentLength);
+            Map<?, ?> body = OBJECT_MAPPER.readValue(new String(buf), Map.class);
+            assertEquals("GET /health", body.get("action"));
         }
     }
 
     @Test
-    void shouldReturnControlledErrorForInvalidFrameSequence() throws Exception {
+    void shouldReturn400OnInvalidJsonBody() throws Exception {
         int port = findFreePort();
         HttpTransport transport = new HttpTransport();
         transport.startServer(port, request -> new Response(200, "ok", Map.of("message", "ok")));
-        Thread.sleep(150);
+        Thread.sleep(200);
 
+        byte[] badBody = "not-json".getBytes(StandardCharsets.UTF_8);
         try (Socket socket = new Socket("127.0.0.1", port);
-             BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream());
-             BufferedInputStream input = new BufferedInputStream(socket.getInputStream())) {
-            Http2Wire.writeFrame(output, 1, Http2Wire.FRAME_DATA, "invalid".getBytes());
-            output.flush();
-            Http2Wire.Frame h = Http2Wire.readFrame(input);
-            assertEquals("400", Http2Wire.decodeHeaders(h.payload()).get(":status"));
+             OutputStream out = socket.getOutputStream();
+             BufferedReader reader = new BufferedReader(
+                     new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
+
+            PrintWriter writer = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8), false);
+            writer.printf("POST /accounts HTTP/1.1\r\n");
+            writer.printf("Host: 127.0.0.1:%d\r\n", port);
+            writer.printf("Content-Type: application/json\r\n");
+            writer.printf("Content-Length: %d\r\n", badBody.length);
+            writer.printf("Connection: close\r\n");
+            writer.printf("\r\n");
+            writer.flush();
+            out.write(badBody);
+            out.flush();
+
+            String statusLine = reader.readLine();
+            assertEquals("HTTP/1.1 400 Bad Request", statusLine);
         }
     }
 

@@ -169,6 +169,23 @@ class GatewayRouterTest {
         assertEquals(2, transport.targetsHistory.size());
     }
 
+    @Test
+    void shouldReturnStructured500WhenTransportThrowsUnexpectedException() {
+        StubTransport transport = new StubTransport();
+        transport.throwOnSend = true;
+        GatewayServiceRegistry serviceRegistry = new GatewayServiceRegistry(
+                Map.of(ServiceName.ACCOUNT, List.of(new Instance("account-1", ServiceName.ACCOUNT, "127.0.0.1", 8081)))
+        );
+        GatewayRouter router = new GatewayRouter(transport, serviceRegistry, policy(1, 0L));
+
+        Response response = router.route(new Request("r9", ServiceName.ACCOUNT, "GET /accounts/a", Map.of()));
+
+        assertEquals(500, response.statusCode());
+        assertEquals("gateway routing failure", response.message());
+        assertEquals("r9", response.payload().get("requestId"));
+        assertEquals("ACCOUNT", response.payload().get("service"));
+    }
+
     private static GatewayRetryPolicy policy(int maxAttempts, long backoffMillis) {
         return GatewayRetryPolicy.fromArgs(
                 new String[]{
@@ -184,6 +201,7 @@ class GatewayRouterTest {
         private Response nextResponse = new Response(200, "forwarded", Map.of("ok", true));
         private final Map<String, List<Response>> scriptedResponses = new HashMap<>();
         private final List<Instance> targetsHistory = new ArrayList<>();
+        private boolean throwOnSend;
 
         @Override
         public void startServer(int port, br.ufrn.pdist.shared.contracts.RequestHandler handler) {
@@ -192,6 +210,9 @@ class GatewayRouterTest {
 
         @Override
         public Response send(Request request, Instance target) {
+            if (throwOnSend) {
+                throw new IllegalStateException("simulated transport crash");
+            }
             this.lastRequest = request;
             this.lastTarget = target;
             this.targetsHistory.add(target);

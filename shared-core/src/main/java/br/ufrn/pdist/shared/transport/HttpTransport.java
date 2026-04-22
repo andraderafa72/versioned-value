@@ -4,182 +4,266 @@ import br.ufrn.pdist.shared.contracts.Instance;
 import br.ufrn.pdist.shared.contracts.Request;
 import br.ufrn.pdist.shared.contracts.RequestHandler;
 import br.ufrn.pdist.shared.contracts.Response;
-import com.fasterxml.jackson.core.JsonProcessingException;
+import br.ufrn.pdist.shared.http.BankingHttpRoutes;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
-import java.time.Duration;
-import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public final class HttpTransport implements TransportLayer {
+
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() { };
-    private final TcpTransport tcpTransport = new TcpTransport();
-    private final AtomicInteger nextClientStreamId = new AtomicInteger(1);
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+    private static final int READ_TIMEOUT_MILLIS = 5_000;
 
     @Override
     public void startServer(int port, RequestHandler handler) {
-        tcpTransport.startSocketServer(port, "http2", socket -> handleConnection(socket, handler));
+        Thread acceptThread = new Thread(() -> runServer(port, handler), "http-server-" + port);
+        acceptThread.setDaemon(false);
+        acceptThread.start();
+    }
+
+    private void runServer(int port, RequestHandler handler) {
+        try (ServerSocket serverSocket = new ServerSocket(port, 300)) {
+            System.out.printf("transport=http event=server-started port=%d%n", port);
+            while (true) {
+                Socket client = serverSocket.accept();
+                Thread worker = new Thread(
+                        () -> handleConnection(client, handler),
+                        "http-conn-" + client.getPort()
+                );
+                worker.setDaemon(false);
+                worker.start();
+            }
+        } catch (IOException e) {
+            System.err.printf("transport=http event=server-failure port=%d error=\"%s\"%n", port, e.getMessage());
+        }
+    }
+
+    private void handleConnection(Socket socket, RequestHandler handler) {
+        try (socket;
+             BufferedReader reader = new BufferedReader(
+                     new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+             OutputStream out = socket.getOutputStream()) {
+
+            String requestLine = reader.readLine();
+            if (requestLine == null || requestLine.isBlank()) {
+                return;
+            }
+            String[] parts = requestLine.split(" ", 3);
+            if (parts.length < 2) {
+                return;
+            }
+            String method = parts[0].toUpperCase(Locale.ROOT);
+            String path = parts[1];
+
+            int contentLength = 0;
+            String requestId = null;
+            String line;
+            while ((line = reader.readLine()) != null && !line.isEmpty()) {
+                String lower = line.toLowerCase(Locale.ROOT);
+                if (lower.startsWith("content-length:")) {
+                    contentLength = Integer.parseInt(line.substring(15).trim());
+                } else if (lower.startsWith("x-request-id:")) {
+                    requestId = line.substring(13).trim();
+                }
+            }
+
+            String body = "";
+            if (contentLength > 0) {
+                char[] buf = new char[contentLength];
+                int totalRead = 0;
+                while (totalRead < contentLength) {
+                    int n = reader.read(buf, totalRead, contentLength - totalRead);
+                    if (n < 0) break;
+                    totalRead += n;
+                }
+                body = new String(buf, 0, totalRead);
+            }
+
+            Map<String, Object> payload;
+            try {
+                payload = body.isEmpty() ? new LinkedHashMap<>() : OBJECT_MAPPER.readValue(body, MAP_TYPE);
+            } catch (IOException e) {
+                sendHttpResponse(out, 400, "Bad Request", Map.of("message", "Invalid JSON body"));
+                return;
+            }
+
+            if (requestId == null || requestId.isBlank()) {
+                Object fromBody = payload.get("requestId");
+                requestId = (fromBody != null && !fromBody.toString().isBlank())
+                        ? fromBody.toString()
+                        : UUID.randomUUID().toString();
+            }
+
+            Response response;
+            try {
+                response = handler.handle(new Request(requestId, method + " " + path, payload));
+                if (response == null) {
+                    response = transportError(500, "Handler returned null response", requestId);
+                }
+            } catch (RuntimeException e) {
+                response = transportError(500, "Handler failure: " + e.getMessage(), requestId);
+            }
+
+            Map<String, Object> responsePayload = new LinkedHashMap<>();
+            if (response.payload() != null) responsePayload.putAll(response.payload());
+            responsePayload.putIfAbsent("requestId", requestId);
+            responsePayload.putIfAbsent("message", response.message());
+            sendHttpResponse(out, response.statusCode(), statusText(response.statusCode()), responsePayload);
+
+        } catch (IOException e) {
+            if (isBrokenPipe(e)) {
+                System.out.printf("transport=http event=client-disconnected%n");
+            } else {
+                System.err.printf("transport=http event=io-failure error=\"%s\"%n", e.getMessage());
+            }
+        }
+    }
+
+    private static boolean isBrokenPipe(IOException e) {
+        String msg = e.getMessage();
+        return msg != null && (msg.contains("Broken pipe") || msg.contains("Pipe quebrado")
+                || msg.contains("Connection reset") || msg.contains("Software caused connection abort"));
+    }
+
+    private static void sendHttpResponse(OutputStream out, int statusCode, String statusText,
+                                         Map<String, Object> payload) throws IOException {
+        byte[] body = OBJECT_MAPPER.writeValueAsBytes(payload);
+        PrintWriter header = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8), false);
+        header.printf("HTTP/1.1 %d %s\r\n", statusCode, statusText);
+        header.printf("Server: versioned-value\r\n");
+        header.printf("Content-Type: application/json\r\n");
+        header.printf("Content-Length: %d\r\n", body.length);
+        header.printf("Connection: close\r\n");
+        header.printf("\r\n");
+        header.flush();
+        out.write(body);
+        out.flush();
     }
 
     @Override
     public Response send(Request request, Instance target) {
-        int streamId = nextClientStreamId.getAndAdd(2);
-        HttpTarget actionTarget = parseActionTarget(request.action());
-        try {
-            return tcpTransport.executeClient(target, socket -> {
-                BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream());
-                BufferedInputStream input = new BufferedInputStream(socket.getInputStream());
-                byte[] body = OBJECT_MAPPER.writeValueAsBytes(request.payload());
-                writeHttp2Request(output, streamId, actionTarget.method(), actionTarget.path(), body);
-                output.flush();
-                Http2Response http2Response = readHttp2Response(input, streamId);
-                Map<String, Object> payload = parseBodyMap(http2Response.body());
-                return new Response(http2Response.statusCode(), extractMessage(payload, http2Response.statusCode()), payload);
-            });
-        } catch (SocketTimeoutException exception) {
-            return transportError(504, "Transport timeout", request.requestId());
-        } catch (JsonProcessingException exception) {
-            return transportError(400, "Malformed transport payload", request.requestId());
-        } catch (IOException exception) {
-            return transportError(502, "Transport I/O failure: " + exception.getMessage(), request.requestId());
-        }
-    }
+        try (Socket socket = new Socket(target.host(), target.port())) {
+            socket.setSoTimeout(READ_TIMEOUT_MILLIS);
 
-    private void handleConnection(Socket clientSocket, RequestHandler handler) {
-        String remote = clientSocket.getRemoteSocketAddress().toString();
-        try (Socket socket = clientSocket;
-             BufferedInputStream input = new BufferedInputStream(socket.getInputStream());
-             BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream())) {
-            Instant start = Instant.now();
-            try {
-                Http2Request incoming = readHttp2Request(input);
-                String method = incoming.headers().getOrDefault(":method", "POST");
-                String path = incoming.headers().getOrDefault(":path", "/");
-                if (!isSupportedMethod(method)) {
-                    writeHttp2Response(output, incoming.streamId(), 405, Map.of("message", "Method not allowed"));
-                    output.flush();
-                    logRequest(method, path, 405, start, incoming.streamId());
-                    return;
-                }
-                Map<String, Object> payload = parseBodyMap(incoming.body());
-                String requestId = resolveRequestId(payload);
-                Response response = handler.handle(new Request(requestId, method + " " + path, payload));
-                Map<String, Object> responsePayload = new LinkedHashMap<>(response.payload());
-                responsePayload.putIfAbsent("requestId", requestId);
-                responsePayload.putIfAbsent("message", response.message());
-                writeHttp2Response(output, incoming.streamId(), response.statusCode(), responsePayload);
-                output.flush();
-                logRequest(method, path, response.statusCode(), start, incoming.streamId());
-            } catch (Exception exception) {
-                writeHttp2Response(output, 1, 400, Map.of("message", exception.getMessage()));
-                output.flush();
-                System.out.printf("transport=http2 event=bad-request remote=%s error=\"%s\"%n", remote, exception.getMessage());
+            String method;
+            String path;
+            byte[] body;
+
+            if (request.service() != null && request.action() != null && !request.action().contains(" ")) {
+                BankingHttpRoutes.OutboundHttp outbound = BankingHttpRoutes.toOutboundRequest(request);
+                method = outbound.method();
+                path = outbound.path();
+                body = OBJECT_MAPPER.writeValueAsBytes(outbound.jsonBody());
+            } else {
+                String[] mp = parseMethodPath(request.action());
+                method = mp[0];
+                path = mp[1];
+                Map<String, Object> p = request.payload() == null ? Map.of() : request.payload();
+                body = OBJECT_MAPPER.writeValueAsBytes(p);
             }
-        } catch (IOException exception) {
-            System.out.printf("transport=http2 event=io-failure remote=%s error=\"%s\"%n", remote, exception.getMessage());
+
+            OutputStream out = socket.getOutputStream();
+            PrintWriter header = new PrintWriter(new OutputStreamWriter(out, StandardCharsets.UTF_8), false);
+            header.printf("%s %s HTTP/1.1\r\n", method, path);
+            header.printf("Host: %s:%d\r\n", target.host(), target.port());
+            header.printf("Content-Type: application/json\r\n");
+            header.printf("Content-Length: %d\r\n", body.length);
+            header.printf("X-Request-Id: %s\r\n", request.requestId());
+            header.printf("Connection: close\r\n");
+            header.printf("\r\n");
+            header.flush();
+            out.write(body);
+            out.flush();
+
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            String statusLine = reader.readLine();
+            if (statusLine == null) {
+                return transportError(502, "Empty response from server", request.requestId());
+            }
+            String[] statusParts = statusLine.split(" ", 3);
+            int statusCode = Integer.parseInt(statusParts[1]);
+
+            int responseContentLength = 0;
+            String respLine;
+            while ((respLine = reader.readLine()) != null && !respLine.isEmpty()) {
+                if (respLine.toLowerCase(Locale.ROOT).startsWith("content-length:")) {
+                    responseContentLength = Integer.parseInt(respLine.substring(15).trim());
+                }
+            }
+
+            String responseBody = "";
+            if (responseContentLength > 0) {
+                char[] buf = new char[responseContentLength];
+                int totalRead = 0;
+                while (totalRead < responseContentLength) {
+                    int n = reader.read(buf, totalRead, responseContentLength - totalRead);
+                    if (n < 0) break;
+                    totalRead += n;
+                }
+                responseBody = new String(buf, 0, totalRead);
+            }
+
+            Map<String, Object> responsePayload = responseBody.isEmpty()
+                    ? new LinkedHashMap<>()
+                    : OBJECT_MAPPER.readValue(responseBody, MAP_TYPE);
+            Object msg = responsePayload.get("message");
+            String message = msg != null ? msg.toString() : "HTTP " + statusCode;
+            return new Response(statusCode, message, responsePayload);
+
+        } catch (SocketTimeoutException e) {
+            return transportError(504, "Transport timeout", request.requestId());
+        } catch (IOException e) {
+            return transportError(502, "Transport I/O failure: " + e.getMessage(), request.requestId());
         }
     }
 
-    private static void writeHttp2Request(BufferedOutputStream output, int streamId, String method, String path, byte[] body)
-            throws IOException {
-        Map<String, String> headers = new LinkedHashMap<>();
-        headers.put(":method", method);
-        headers.put(":path", path);
-        headers.put(":scheme", "http");
-        headers.put("content-type", "application/json");
-        headers.put("te", "trailers");
-        Http2Wire.writeFrame(output, streamId, Http2Wire.FRAME_HEADERS, Http2Wire.encodeHeaders(headers));
-        Http2Wire.writeFrame(output, streamId, Http2Wire.FRAME_DATA, body);
-    }
-
-    private static Http2Request readHttp2Request(BufferedInputStream input) throws IOException {
-        Http2Wire.Frame h = Http2Wire.readFrame(input);
-        Http2Wire.Frame d = Http2Wire.readFrame(input);
-        if (h.type() != Http2Wire.FRAME_HEADERS || d.type() != Http2Wire.FRAME_DATA || h.streamId() != d.streamId()) {
-            throw new Http2Wire.Http2ProtocolException("invalid request frame sequence");
-        }
-        return new Http2Request(h.streamId(), Http2Wire.decodeHeaders(h.payload()), d.payload());
-    }
-
-    private static void writeHttp2Response(BufferedOutputStream output, int streamId, int statusCode, Map<String, Object> payload)
-            throws IOException {
-        byte[] body = OBJECT_MAPPER.writeValueAsBytes(payload);
-        Map<String, String> headers = new LinkedHashMap<>();
-        headers.put(":status", String.valueOf(statusCode));
-        headers.put("content-type", "application/json");
-        Http2Wire.writeFrame(output, streamId, Http2Wire.FRAME_HEADERS, Http2Wire.encodeHeaders(headers));
-        Http2Wire.writeFrame(output, streamId, Http2Wire.FRAME_DATA, body);
-    }
-
-    private static Http2Response readHttp2Response(BufferedInputStream input, int expectedStreamId) throws IOException {
-        Http2Wire.Frame h = Http2Wire.readFrame(input);
-        Http2Wire.Frame d = Http2Wire.readFrame(input);
-        if (h.type() != Http2Wire.FRAME_HEADERS || d.type() != Http2Wire.FRAME_DATA || h.streamId() != expectedStreamId
-                || d.streamId() != expectedStreamId) {
-            throw new Http2Wire.Http2ProtocolException("invalid response frame sequence");
-        }
-        String rawStatus = Http2Wire.decodeHeaders(h.payload()).get(":status");
-        if (rawStatus == null || rawStatus.isBlank()) {
-            throw new Http2Wire.Http2ProtocolException("missing :status");
-        }
-        return new Http2Response(Integer.parseInt(rawStatus), d.payload());
-    }
-
-    private static HttpTarget parseActionTarget(String action) {
+    private static String[] parseMethodPath(String action) {
         if (action == null || action.isBlank()) {
-            return new HttpTarget("POST", "/");
+            return new String[]{"POST", "/"};
         }
         String[] parts = action.trim().split(" ", 2);
-        if (parts.length == 2 && isSupportedMethod(parts[0].toUpperCase(Locale.ROOT))) {
-            return new HttpTarget(parts[0].toUpperCase(Locale.ROOT), parts[1]);
+        if (parts.length == 2) {
+            return new String[]{parts[0].toUpperCase(Locale.ROOT), parts[1]};
         }
-        return new HttpTarget("POST", "/" + action.trim().replace(' ', '-'));
+        return new String[]{"POST", "/" + action.trim().replace(' ', '-')};
     }
 
-    private static boolean isSupportedMethod(String method) {
-        return "GET".equals(method) || "POST".equals(method);
-    }
-
-    private static Map<String, Object> parseBodyMap(byte[] body) throws IOException {
-        return body.length == 0 ? new LinkedHashMap<>() : OBJECT_MAPPER.readValue(body, MAP_TYPE);
-    }
-
-    private static String resolveRequestId(Map<String, Object> payload) {
-        Object value = payload.get("requestId");
-        if (value == null || value.toString().isBlank()) {
-            String generated = UUID.randomUUID().toString();
-            payload.put("requestId", generated);
-            return generated;
-        }
-        return value.toString();
-    }
-
-    private static String extractMessage(Map<String, Object> payload, int statusCode) {
-        Object message = payload.get("message");
-        return message == null ? "HTTP/2 " + statusCode : message.toString();
-    }
-
-    private static void logRequest(String method, String path, int status, Instant start, int streamId) {
-        long elapsed = Duration.between(start, Instant.now()).toMillis();
-        System.out.printf("transport=http2 event=request method=%s path=%s status=%d streamId=%d durationMs=%d%n",
-                method, path, status, streamId, elapsed);
+    private static String statusText(int code) {
+        return switch (code) {
+            case 200 -> "OK";
+            case 201 -> "Created";
+            case 400 -> "Bad Request";
+            case 403 -> "Forbidden";
+            case 404 -> "Not Found";
+            case 405 -> "Method Not Allowed";
+            case 409 -> "Conflict";
+            case 500 -> "Internal Server Error";
+            case 502 -> "Bad Gateway";
+            case 503 -> "Service Unavailable";
+            case 504 -> "Gateway Timeout";
+            default -> "Unknown";
+        };
     }
 
     private static Response transportError(int statusCode, String message, String requestId) {
-        return new Response(statusCode, message, Map.of("requestId", requestId));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("requestId", requestId);
+        payload.put("message", message);
+        return new Response(statusCode, message, payload);
     }
-
-    private record HttpTarget(String method, String path) { }
-    private record Http2Request(int streamId, Map<String, String> headers, byte[] body) { }
-    private record Http2Response(int statusCode, byte[] body) { }
 }

@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package br.ufrn.pdist.transport.v1;
+
+import "google/protobuf/struct.proto";
+
+option java_multiple_files = true;
+option java_package = "br.ufrn.pdist.shared.transport.grpc.v1";
+option java_outer_classname = "TransportProto";
+
+message TransportRequest {
+  string request_id = 1;
+  string service = 2;
+  string action = 3;
+  google.protobuf.Struct payload = 4;
+}
+
+message TransportResponse {
+  int32 status_code = 1;
+  string message = 2;
+  google.protobuf.Struct payload = 3;
+}
+
+service TransportGateway {
+  rpc Handle(TransportRequest) returns (TransportResponse);
+}

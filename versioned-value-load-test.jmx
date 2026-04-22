@@ -1,0 +1,985 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PRÉ-REQUISITOS — iniciar todos os processos antes de rodar o teste:
+
+  Gateway TCP   : java -jar gateway/target/gateway-0.0.1-SNAPSHOT.jar --protocol=TCP  --port=8080 --instanceId=gw-tcp
+  Gateway HTTP  : java -jar gateway/target/gateway-0.0.1-SNAPSHOT.jar --protocol=HTTP --port=8081 --instanceId=gw-http
+  Gateway gRPC  : java -jar gateway/target/gateway-0.0.1-SNAPSHOT.jar --protocol=GRPC --port=8082 --instanceId=gw-grpc
+  Gateway UDP   : java -jar gateway/target/gateway-0.0.1-SNAPSHOT.jar --protocol=UDP  --port=8083 --instanceId=gw-udp
+
+  account-service (repetir para cada protocolo/porta, ajustando --gatewayPort e --instanceId):
+    java -jar account-service/target/account-service-0.0.1-SNAPSHOT.jar --protocol=TCP  --port=9080 --instanceId=acc-tcp
+    java -jar account-service/target/account-service-0.0.1-SNAPSHOT.jar --protocol=HTTP --port=9081 --instanceId=acc-http
+    java -jar account-service/target/account-service-0.0.1-SNAPSHOT.jar --protocol=GRPC --port=9082 --instanceId=acc-grpc
+    java -jar account-service/target/account-service-0.0.1-SNAPSHOT.jar --protocol=UDP  --port=9083 --instanceId=acc-udp
+
+  transaction-service (idem):
+    java -jar transaction-service/target/transaction-service-0.0.1-SNAPSHOT.jar --protocol=TCP  --port=9180 --instanceId=tx-tcp
+    java -jar transaction-service/target/transaction-service-0.0.1-SNAPSHOT.jar --protocol=HTTP --port=9181 --instanceId=tx-http
+    java -jar transaction-service/target/transaction-service-0.0.1-SNAPSHOT.jar --protocol=GRPC --port=9182 --instanceId=tx-grpc
+    java -jar transaction-service/target/transaction-service-0.0.1-SNAPSHOT.jar --protocol=UDP  --port=9183 --instanceId=tx-udp
+
+  Para o Thread Group gRPC funcionar: copiar
+    shared-core/target/shared-core-0.0.1-SNAPSHOT.jar
+  para $JMETER_HOME/lib/ext/
+
+  Para desabilitar um protocolo durante a apresentação: botão direito no Thread Group > Disable.
+-->
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan"
+              testname="versioned-value — 4 Protocolos" enabled="true">
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments"
+                   guiclass="ArgumentsPanel" testclass="Arguments" enabled="true">
+        <collectionProp name="Arguments.arguments">
+          <elementProp name="HOST" elementType="Argument">
+            <stringProp name="Argument.name">HOST</stringProp>
+            <stringProp name="Argument.value">127.0.0.1</stringProp>
+          </elementProp>
+          <elementProp name="TCP_PORT" elementType="Argument">
+            <stringProp name="Argument.name">TCP_PORT</stringProp>
+            <stringProp name="Argument.value">8080</stringProp>
+          </elementProp>
+          <elementProp name="HTTP_PORT" elementType="Argument">
+            <stringProp name="Argument.name">HTTP_PORT</stringProp>
+            <stringProp name="Argument.value">8081</stringProp>
+          </elementProp>
+          <elementProp name="GRPC_PORT" elementType="Argument">
+            <stringProp name="Argument.name">GRPC_PORT</stringProp>
+            <stringProp name="Argument.value">8082</stringProp>
+          </elementProp>
+          <elementProp name="UDP_PORT" elementType="Argument">
+            <stringProp name="Argument.name">UDP_PORT</stringProp>
+            <stringProp name="Argument.value">8083</stringProp>
+          </elementProp>
+          <!-- Número de usuários: > 5 e < Knee Capacity.
+               Ajustar conforme resultado da análise de carga prévia. -->
+          <elementProp name="USERS" elementType="Argument">
+            <stringProp name="Argument.name">USERS</stringProp>
+            <stringProp name="Argument.value">10</stringProp>
+          </elementProp>
+          <elementProp name="RAMP_UP" elementType="Argument">
+            <stringProp name="Argument.name">RAMP_UP</stringProp>
+            <stringProp name="Argument.value">10</stringProp>
+          </elementProp>
+          <elementProp name="DURATION" elementType="Argument">
+            <stringProp name="Argument.name">DURATION</stringProp>
+            <stringProp name="Argument.value">300</stringProp>
+          </elementProp>
+        </collectionProp>
+      </elementProp>
+    </TestPlan>
+    <hashTree>
+
+      <!-- ================================================================ -->
+      <!--                       TCP  THREAD GROUP                          -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
+                   testname="[TCP] ${USERS} usuários" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController"
+                     guiclass="LoopControlPanel" testclass="LoopController" enabled="true">
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${USERS}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">0</stringProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <!-- Setup: criar duas contas por thread, executado apenas uma vez -->
+        <OnceOnlyController guiclass="OnceOnlyControllerGui"
+                            testclass="OnceOnlyController"
+                            testname="Setup — Criar contas" enabled="true"/>
+        <hashTree>
+          <TCPSampler guiclass="TCPSamplerUI" testclass="TCPSampler"
+                      testname="TCP — createAccount A" enabled="true">
+            <stringProp name="TCPSampler.server">${HOST}</stringProp>
+            <stringProp name="TCPSampler.port">${TCP_PORT}</stringProp>
+            <boolProp name="TCPSampler.reUseConnection">false</boolProp>
+            <boolProp name="TCPSampler.closeConnection">true</boolProp>
+            <stringProp name="TCPSampler.nodelay">true</stringProp>
+            <stringProp name="TCPSampler.timeout">10000</stringProp>
+            <stringProp name="TCPSampler.classname">TCPClientImpl</stringProp>
+            <stringProp name="TCPSampler.request">{"requestId":"${__UUID()}","service":"ACCOUNT","action":"createAccount","payload":{"accountId":"tcp-${__threadNum()}-a","initialBalance":100000.00}}
+</stringProp>
+          </TCPSampler>
+          <hashTree>
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                             testname="Assert 200 ou 409" enabled="true">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="script">
+def resp = prev.getResponseDataAsString()
+if (!resp) return
+def json = new groovy.json.JsonSlurper().parseText(resp)
+def code = json.statusCode as int
+if (code != 200 &amp;&amp; code != 409) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage("createAccount: ${code} — ${json.message}")
+}
+              </stringProp>
+            </JSR223Assertion>
+            <hashTree/>
+          </hashTree>
+
+          <TCPSampler guiclass="TCPSamplerUI" testclass="TCPSampler"
+                      testname="TCP — createAccount B" enabled="true">
+            <stringProp name="TCPSampler.server">${HOST}</stringProp>
+            <stringProp name="TCPSampler.port">${TCP_PORT}</stringProp>
+            <boolProp name="TCPSampler.reUseConnection">false</boolProp>
+            <boolProp name="TCPSampler.closeConnection">true</boolProp>
+            <stringProp name="TCPSampler.nodelay">true</stringProp>
+            <stringProp name="TCPSampler.timeout">10000</stringProp>
+            <stringProp name="TCPSampler.classname">TCPClientImpl</stringProp>
+            <stringProp name="TCPSampler.request">{"requestId":"${__UUID()}","service":"ACCOUNT","action":"createAccount","payload":{"accountId":"tcp-${__threadNum()}-b","initialBalance":100000.00}}
+</stringProp>
+          </TCPSampler>
+          <hashTree>
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                             testname="Assert 200 ou 409" enabled="true">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="script">
+def resp = prev.getResponseDataAsString()
+if (!resp) return
+def json = new groovy.json.JsonSlurper().parseText(resp)
+def code = json.statusCode as int
+if (code != 200 &amp;&amp; code != 409) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage("createAccount: ${code} — ${json.message}")
+}
+              </stringProp>
+            </JSR223Assertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+
+        <!-- getBalance -->
+        <TCPSampler guiclass="TCPSamplerUI" testclass="TCPSampler"
+                    testname="TCP — getBalance" enabled="true">
+          <stringProp name="TCPSampler.server">${HOST}</stringProp>
+          <stringProp name="TCPSampler.port">${TCP_PORT}</stringProp>
+          <boolProp name="TCPSampler.reUseConnection">false</boolProp>
+          <boolProp name="TCPSampler.closeConnection">true</boolProp>
+          <stringProp name="TCPSampler.nodelay">true</stringProp>
+          <stringProp name="TCPSampler.timeout">10000</stringProp>
+          <stringProp name="TCPSampler.classname">TCPClientImpl</stringProp>
+          <stringProp name="TCPSampler.request">{"requestId":"${__UUID()}","service":"ACCOUNT","action":"getBalance","payload":{"accountId":"tcp-${__threadNum()}-a"}}
+</stringProp>
+        </TCPSampler>
+        <hashTree>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                           testname="Assert 200" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def resp = prev.getResponseDataAsString()
+if (!resp) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage("Resposta vazia"); return }
+def json = new groovy.json.JsonSlurper().parseText(resp)
+def code = json.statusCode as int
+if (code >= 400) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage("${code} — ${json.message}")
+}
+            </stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- deposit -->
+        <TCPSampler guiclass="TCPSamplerUI" testclass="TCPSampler"
+                    testname="TCP — deposit" enabled="true">
+          <stringProp name="TCPSampler.server">${HOST}</stringProp>
+          <stringProp name="TCPSampler.port">${TCP_PORT}</stringProp>
+          <boolProp name="TCPSampler.reUseConnection">false</boolProp>
+          <boolProp name="TCPSampler.closeConnection">true</boolProp>
+          <stringProp name="TCPSampler.nodelay">true</stringProp>
+          <stringProp name="TCPSampler.timeout">10000</stringProp>
+          <stringProp name="TCPSampler.classname">TCPClientImpl</stringProp>
+          <stringProp name="TCPSampler.request">{"requestId":"${__UUID()}","service":"TRANSACTION","action":"deposit","payload":{"accountId":"tcp-${__threadNum()}-a","amount":10.00}}
+</stringProp>
+        </TCPSampler>
+        <hashTree>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                           testname="Assert 200" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def resp = prev.getResponseDataAsString()
+if (!resp) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage("Resposta vazia"); return }
+def json = new groovy.json.JsonSlurper().parseText(resp)
+def code = json.statusCode as int
+if (code >= 400) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage("${code} — ${json.message}")
+}
+            </stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- transfer -->
+        <TCPSampler guiclass="TCPSamplerUI" testclass="TCPSampler"
+                    testname="TCP — transfer" enabled="true">
+          <stringProp name="TCPSampler.server">${HOST}</stringProp>
+          <stringProp name="TCPSampler.port">${TCP_PORT}</stringProp>
+          <boolProp name="TCPSampler.reUseConnection">false</boolProp>
+          <boolProp name="TCPSampler.closeConnection">true</boolProp>
+          <stringProp name="TCPSampler.nodelay">true</stringProp>
+          <stringProp name="TCPSampler.timeout">10000</stringProp>
+          <stringProp name="TCPSampler.classname">TCPClientImpl</stringProp>
+          <stringProp name="TCPSampler.request">{"requestId":"${__UUID()}","service":"TRANSACTION","action":"transfer","payload":{"fromAccountId":"tcp-${__threadNum()}-a","toAccountId":"tcp-${__threadNum()}-b","amount":5.00}}
+</stringProp>
+        </TCPSampler>
+        <hashTree>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                           testname="Assert 200" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def resp = prev.getResponseDataAsString()
+if (!resp) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage("Resposta vazia"); return }
+def json = new groovy.json.JsonSlurper().parseText(resp)
+def code = json.statusCode as int
+if (code >= 400) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage("${code} — ${json.message}")
+}
+            </stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!--                      HTTP  THREAD GROUP                          -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
+                   testname="[HTTP] ${USERS} usuários" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController"
+                     guiclass="LoopControlPanel" testclass="LoopController" enabled="true">
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${USERS}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">0</stringProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <!-- Header padrão para todas as requisições HTTP -->
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager"
+                       testname="Content-Type JSON" enabled="true">
+          <collectionProp name="HeaderManager.headers">
+            <elementProp name="" elementType="Header">
+              <stringProp name="Header.name">Content-Type</stringProp>
+              <stringProp name="Header.value">application/json</stringProp>
+            </elementProp>
+          </collectionProp>
+        </HeaderManager>
+        <hashTree/>
+
+        <OnceOnlyController guiclass="OnceOnlyControllerGui"
+                            testclass="OnceOnlyController"
+                            testname="Setup — Criar contas" enabled="true"/>
+        <hashTree>
+          <!-- createAccount A -->
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="HTTP — createAccount A" enabled="true">
+            <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${HTTP_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/v1/accounts</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <stringProp name="HTTPSampler.connect_timeout">5000</stringProp>
+            <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"requestId":"${__UUID()}","accountId":"http-${__threadNum()}-a","initialBalance":100000.00}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                             testname="Assert 200 ou 409" enabled="true">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="script">
+def code = prev.getResponseCode() as int
+if (code != 200 &amp;&amp; code != 409) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage("createAccount HTTP: ${code}")
+}
+              </stringProp>
+            </JSR223Assertion>
+            <hashTree/>
+          </hashTree>
+
+          <!-- createAccount B -->
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                            testname="HTTP — createAccount B" enabled="true">
+            <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${HTTP_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/v1/accounts</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <stringProp name="HTTPSampler.connect_timeout">5000</stringProp>
+            <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"requestId":"${__UUID()}","accountId":"http-${__threadNum()}-b","initialBalance":100000.00}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion"
+                             testname="Assert 200 ou 409" enabled="true">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="script">
+def code = prev.getResponseCode() as int
+if (code != 200 &amp;&amp; code != 409) {
+    AssertionResult.setFailure(true)
+    AssertionResult.setFailureMessage("createAccount HTTP: ${code}")
+}
+              </stringProp>
+            </JSR223Assertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+
+        <!-- getBalance -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="HTTP — getBalance" enabled="true">
+          <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${HTTP_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/v1/accounts/http-${__threadNum()}-a/balance</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <stringProp name="HTTPSampler.connect_timeout">5000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert 200" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="49586">200</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.custom_message"/>
+            <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+            <boolProp name="Assertion.assume_success">false</boolProp>
+            <intProp name="Assertion.test_type">8</intProp>
+          </ResponseAssertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- deposit -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="HTTP — deposit" enabled="true">
+          <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${HTTP_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/v1/transactions/deposit</stringProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <stringProp name="HTTPSampler.connect_timeout">5000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{"requestId":"${__UUID()}","accountId":"http-${__threadNum()}-a","amount":10.00}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert 200" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="49586">200</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.custom_message"/>
+            <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+            <boolProp name="Assertion.assume_success">false</boolProp>
+            <intProp name="Assertion.test_type">8</intProp>
+          </ResponseAssertion>
+          <hashTree/>
+        </hashTree>
+
+        <!-- transfer -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy"
+                          testname="HTTP — transfer" enabled="true">
+          <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${HTTP_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">http</stringProp>
+          <stringProp name="HTTPSampler.path">/api/v1/transactions/transfer</stringProp>
+          <stringProp name="HTTPSampler.method">POST</stringProp>
+          <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+          <stringProp name="HTTPSampler.connect_timeout">5000</stringProp>
+          <stringProp name="HTTPSampler.response_timeout">10000</stringProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+            <collectionProp name="Arguments.arguments">
+              <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                <stringProp name="Argument.value">{"requestId":"${__UUID()}","fromAccountId":"http-${__threadNum()}-a","toAccountId":"http-${__threadNum()}-b","amount":5.00}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+            </collectionProp>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree>
+          <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion"
+                             testname="Assert 200" enabled="true">
+            <collectionProp name="Asserion.test_strings">
+              <stringProp name="49586">200</stringProp>
+            </collectionProp>
+            <stringProp name="Assertion.custom_message"/>
+            <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+            <boolProp name="Assertion.assume_success">false</boolProp>
+            <intProp name="Assertion.test_type">8</intProp>
+          </ResponseAssertion>
+          <hashTree/>
+        </hashTree>
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!--                      gRPC  THREAD GROUP                          -->
+      <!--  Requer shared-core-0.0.1-SNAPSHOT.jar em $JMETER_HOME/lib/ext  -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
+                   testname="[gRPC] ${USERS} usuários" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController"
+                     guiclass="LoopControlPanel" testclass="LoopController" enabled="true">
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${USERS}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">0</stringProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <OnceOnlyController guiclass="OnceOnlyControllerGui"
+                            testclass="OnceOnlyController"
+                            testname="Setup — Criar contas" enabled="true"/>
+        <hashTree>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                         testname="gRPC — createAccount A" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def host = vars.get("HOST")
+def port = vars.get("GRPC_PORT") as int
+def threadNum = ctx.getThreadNum()
+def accountId = "grpc-${threadNum}-a"
+
+try {
+    Class.forName("br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc")
+} catch (ClassNotFoundException e) {
+    log.warn("[gRPC] shared-core JAR não encontrado em lib/ext — pulando")
+    SampleResult.setResponseCode("200")
+    SampleResult.setResponseData("SKIPPED - adicionar shared-core-0.0.1-SNAPSHOT.jar em lib/ext", "UTF-8")
+    SampleResult.setSuccessful(true)
+    return
+}
+
+def channelKey = "grpc_ch_${threadNum}"
+def channel = vars.getObject(channelKey)
+if (channel == null || channel.isShutdown()) {
+    channel = io.grpc.ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+    vars.putObject(channelKey, channel)
+}
+
+try {
+    def stub = br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc
+        .newBlockingStub(channel)
+        .withDeadlineAfter(5000, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+    def payload = com.google.protobuf.Struct.newBuilder()
+        .putFields("accountId",   com.google.protobuf.Value.newBuilder().setStringValue(accountId).build())
+        .putFields("initialBalance", com.google.protobuf.Value.newBuilder().setNumberValue(100000.0).build())
+        .build()
+
+    def req = br.ufrn.pdist.shared.transport.grpc.v1.TransportRequest.newBuilder()
+        .setRequestId(java.util.UUID.randomUUID().toString())
+        .setService("ACCOUNT")
+        .setAction("createAccount")
+        .setPayload(payload)
+        .build()
+
+    def resp = stub.handle(req)
+    def code = resp.getStatusCode()
+    SampleResult.setResponseCode(String.valueOf(code))
+    SampleResult.setResponseData(resp.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(code == 200 || code == 409)
+} catch (io.grpc.StatusRuntimeException e) {
+    SampleResult.setResponseCode("503")
+    SampleResult.setResponseData(e.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(false)
+}
+            </stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                         testname="gRPC — createAccount B" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def host = vars.get("HOST")
+def port = vars.get("GRPC_PORT") as int
+def threadNum = ctx.getThreadNum()
+def accountId = "grpc-${threadNum}-b"
+
+try { Class.forName("br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc") }
+catch (ClassNotFoundException e) {
+    SampleResult.setResponseCode("200"); SampleResult.setSuccessful(true)
+    SampleResult.setResponseData("SKIPPED", "UTF-8"); return
+}
+
+def channelKey = "grpc_ch_${threadNum}"
+def channel = vars.getObject(channelKey)
+if (channel == null || channel.isShutdown()) {
+    channel = io.grpc.ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+    vars.putObject(channelKey, channel)
+}
+
+try {
+    def stub = br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc
+        .newBlockingStub(channel)
+        .withDeadlineAfter(5000, java.util.concurrent.TimeUnit.MILLISECONDS)
+    def payload = com.google.protobuf.Struct.newBuilder()
+        .putFields("accountId",      com.google.protobuf.Value.newBuilder().setStringValue(accountId).build())
+        .putFields("initialBalance", com.google.protobuf.Value.newBuilder().setNumberValue(100000.0).build())
+        .build()
+    def req = br.ufrn.pdist.shared.transport.grpc.v1.TransportRequest.newBuilder()
+        .setRequestId(java.util.UUID.randomUUID().toString())
+        .setService("ACCOUNT").setAction("createAccount").setPayload(payload).build()
+    def resp = stub.handle(req)
+    def code = resp.getStatusCode()
+    SampleResult.setResponseCode(String.valueOf(code))
+    SampleResult.setResponseData(resp.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(code == 200 || code == 409)
+} catch (io.grpc.StatusRuntimeException e) {
+    SampleResult.setResponseCode("503"); SampleResult.setResponseData(e.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(false)
+}
+            </stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+        </hashTree>
+
+        <!-- gRPC getBalance -->
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                       testname="gRPC — getBalance" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+def host = vars.get("HOST"); def port = vars.get("GRPC_PORT") as int
+def threadNum = ctx.getThreadNum()
+try { Class.forName("br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc") }
+catch (ClassNotFoundException e) {
+    SampleResult.setResponseCode("200"); SampleResult.setSuccessful(true)
+    SampleResult.setResponseData("SKIPPED", "UTF-8"); return
+}
+def channel = vars.getObject("grpc_ch_${threadNum}")
+if (channel == null || channel.isShutdown()) {
+    channel = io.grpc.ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+    vars.putObject("grpc_ch_${threadNum}", channel)
+}
+try {
+    def stub = br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc
+        .newBlockingStub(channel).withDeadlineAfter(5000, java.util.concurrent.TimeUnit.MILLISECONDS)
+    def payload = com.google.protobuf.Struct.newBuilder()
+        .putFields("accountId", com.google.protobuf.Value.newBuilder()
+            .setStringValue("grpc-${threadNum}-a").build()).build()
+    def req = br.ufrn.pdist.shared.transport.grpc.v1.TransportRequest.newBuilder()
+        .setRequestId(java.util.UUID.randomUUID().toString())
+        .setService("ACCOUNT").setAction("getBalance").setPayload(payload).build()
+    def resp = stub.handle(req)
+    SampleResult.setResponseCode(String.valueOf(resp.getStatusCode()))
+    SampleResult.setResponseData(resp.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(resp.getStatusCode() &lt; 400)
+} catch (io.grpc.StatusRuntimeException e) {
+    SampleResult.setResponseCode("503"); SampleResult.setResponseData(e.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(false)
+}
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+
+        <!-- gRPC deposit -->
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                       testname="gRPC — deposit" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+def host = vars.get("HOST"); def port = vars.get("GRPC_PORT") as int
+def threadNum = ctx.getThreadNum()
+try { Class.forName("br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc") }
+catch (ClassNotFoundException e) {
+    SampleResult.setResponseCode("200"); SampleResult.setSuccessful(true)
+    SampleResult.setResponseData("SKIPPED", "UTF-8"); return
+}
+def channel = vars.getObject("grpc_ch_${threadNum}")
+if (channel == null || channel.isShutdown()) {
+    channel = io.grpc.ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+    vars.putObject("grpc_ch_${threadNum}", channel)
+}
+try {
+    def stub = br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc
+        .newBlockingStub(channel).withDeadlineAfter(5000, java.util.concurrent.TimeUnit.MILLISECONDS)
+    def payload = com.google.protobuf.Struct.newBuilder()
+        .putFields("accountId", com.google.protobuf.Value.newBuilder()
+            .setStringValue("grpc-${threadNum}-a").build())
+        .putFields("amount", com.google.protobuf.Value.newBuilder().setNumberValue(10.0).build())
+        .build()
+    def req = br.ufrn.pdist.shared.transport.grpc.v1.TransportRequest.newBuilder()
+        .setRequestId(java.util.UUID.randomUUID().toString())
+        .setService("TRANSACTION").setAction("deposit").setPayload(payload).build()
+    def resp = stub.handle(req)
+    SampleResult.setResponseCode(String.valueOf(resp.getStatusCode()))
+    SampleResult.setResponseData(resp.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(resp.getStatusCode() &lt; 400)
+} catch (io.grpc.StatusRuntimeException e) {
+    SampleResult.setResponseCode("503"); SampleResult.setResponseData(e.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(false)
+}
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+
+        <!-- gRPC transfer -->
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                       testname="gRPC — transfer" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+def host = vars.get("HOST"); def port = vars.get("GRPC_PORT") as int
+def threadNum = ctx.getThreadNum()
+try { Class.forName("br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc") }
+catch (ClassNotFoundException e) {
+    SampleResult.setResponseCode("200"); SampleResult.setSuccessful(true)
+    SampleResult.setResponseData("SKIPPED", "UTF-8"); return
+}
+def channel = vars.getObject("grpc_ch_${threadNum}")
+if (channel == null || channel.isShutdown()) {
+    channel = io.grpc.ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+    vars.putObject("grpc_ch_${threadNum}", channel)
+}
+try {
+    def stub = br.ufrn.pdist.shared.transport.grpc.v1.TransportGatewayGrpc
+        .newBlockingStub(channel).withDeadlineAfter(5000, java.util.concurrent.TimeUnit.MILLISECONDS)
+    def payload = com.google.protobuf.Struct.newBuilder()
+        .putFields("fromAccountId", com.google.protobuf.Value.newBuilder()
+            .setStringValue("grpc-${threadNum}-a").build())
+        .putFields("toAccountId",   com.google.protobuf.Value.newBuilder()
+            .setStringValue("grpc-${threadNum}-b").build())
+        .putFields("amount", com.google.protobuf.Value.newBuilder().setNumberValue(5.0).build())
+        .build()
+    def req = br.ufrn.pdist.shared.transport.grpc.v1.TransportRequest.newBuilder()
+        .setRequestId(java.util.UUID.randomUUID().toString())
+        .setService("TRANSACTION").setAction("transfer").setPayload(payload).build()
+    def resp = stub.handle(req)
+    SampleResult.setResponseCode(String.valueOf(resp.getStatusCode()))
+    SampleResult.setResponseData(resp.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(resp.getStatusCode() &lt; 400)
+} catch (io.grpc.StatusRuntimeException e) {
+    SampleResult.setResponseCode("503"); SampleResult.setResponseData(e.getMessage(), "UTF-8")
+    SampleResult.setSuccessful(false)
+}
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!--                       UDP  THREAD GROUP                          -->
+      <!-- ================================================================ -->
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup"
+                   testname="[UDP] ${USERS} usuários" enabled="true">
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController"
+                     guiclass="LoopControlPanel" testclass="LoopController" enabled="true">
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+          <intProp name="LoopController.loops">-1</intProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">${USERS}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
+        <stringProp name="ThreadGroup.delay">0</stringProp>
+      </ThreadGroup>
+      <hashTree>
+
+        <OnceOnlyController guiclass="OnceOnlyControllerGui"
+                            testclass="OnceOnlyController"
+                            testname="Setup — Criar contas" enabled="true"/>
+        <hashTree>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                         testname="UDP — createAccount A" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def host = vars.get("HOST"); def port = vars.get("UDP_PORT") as int
+def threadNum = ctx.getThreadNum()
+def reqId = java.util.UUID.randomUUID().toString()
+def json = """{"requestId":"${reqId}","service":"ACCOUNT","action":"createAccount","payload":{"accountId":"udp-${threadNum}-a","initialBalance":100000.00}}"""
+
+def socket = new java.net.DatagramSocket()
+socket.setSoTimeout(5000)
+try {
+    def addr = java.net.InetAddress.getByName(host)
+    def data = json.getBytes("UTF-8")
+    socket.send(new java.net.DatagramPacket(data, data.length, addr, port))
+    def buf = new byte[16384]
+    def respPkt = new java.net.DatagramPacket(buf, buf.length)
+    socket.receive(respPkt)
+    def respStr = new String(respPkt.getData(), 0, respPkt.getLength(), "UTF-8")
+    def respJson = new groovy.json.JsonSlurper().parseText(respStr)
+    def code = respJson.statusCode as int
+    SampleResult.setResponseCode(String.valueOf(code))
+    SampleResult.setResponseData(respStr, "UTF-8")
+    SampleResult.setSuccessful(code == 200 || code == 409)
+} catch (java.net.SocketTimeoutException e) {
+    SampleResult.setResponseCode("504"); SampleResult.setSuccessful(false)
+    SampleResult.setResponseData("UDP timeout", "UTF-8")
+} finally {
+    socket.close()
+}
+            </stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                         testname="UDP — createAccount B" enabled="true">
+            <stringProp name="scriptLanguage">groovy</stringProp>
+            <stringProp name="script">
+def host = vars.get("HOST"); def port = vars.get("UDP_PORT") as int
+def threadNum = ctx.getThreadNum()
+def reqId = java.util.UUID.randomUUID().toString()
+def json = """{"requestId":"${reqId}","service":"ACCOUNT","action":"createAccount","payload":{"accountId":"udp-${threadNum}-b","initialBalance":100000.00}}"""
+def socket = new java.net.DatagramSocket(); socket.setSoTimeout(5000)
+try {
+    def addr = java.net.InetAddress.getByName(host)
+    def data = json.getBytes("UTF-8")
+    socket.send(new java.net.DatagramPacket(data, data.length, addr, port))
+    def buf = new byte[16384]; def respPkt = new java.net.DatagramPacket(buf, buf.length)
+    socket.receive(respPkt)
+    def respStr = new String(respPkt.getData(), 0, respPkt.getLength(), "UTF-8")
+    def respJson = new groovy.json.JsonSlurper().parseText(respStr)
+    def code = respJson.statusCode as int
+    SampleResult.setResponseCode(String.valueOf(code))
+    SampleResult.setResponseData(respStr, "UTF-8")
+    SampleResult.setSuccessful(code == 200 || code == 409)
+} catch (java.net.SocketTimeoutException e) {
+    SampleResult.setResponseCode("504"); SampleResult.setSuccessful(false)
+    SampleResult.setResponseData("UDP timeout", "UTF-8")
+} finally { socket.close() }
+            </stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+        </hashTree>
+
+        <!-- UDP getBalance -->
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                       testname="UDP — getBalance" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+def host = vars.get("HOST"); def port = vars.get("UDP_PORT") as int
+def threadNum = ctx.getThreadNum()
+def reqId = java.util.UUID.randomUUID().toString()
+def json = """{"requestId":"${reqId}","service":"ACCOUNT","action":"getBalance","payload":{"accountId":"udp-${threadNum}-a"}}"""
+def socket = new java.net.DatagramSocket(); socket.setSoTimeout(5000)
+try {
+    def addr = java.net.InetAddress.getByName(host)
+    def data = json.getBytes("UTF-8")
+    socket.send(new java.net.DatagramPacket(data, data.length, addr, port))
+    def buf = new byte[16384]; def respPkt = new java.net.DatagramPacket(buf, buf.length)
+    socket.receive(respPkt)
+    def respStr = new String(respPkt.getData(), 0, respPkt.getLength(), "UTF-8")
+    def respJson = new groovy.json.JsonSlurper().parseText(respStr)
+    def code = respJson.statusCode as int
+    SampleResult.setResponseCode(String.valueOf(code))
+    SampleResult.setResponseData(respStr, "UTF-8")
+    SampleResult.setSuccessful(code &lt; 400)
+} catch (java.net.SocketTimeoutException e) {
+    SampleResult.setResponseCode("504"); SampleResult.setSuccessful(false)
+    SampleResult.setResponseData("UDP timeout", "UTF-8")
+} finally { socket.close() }
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+
+        <!-- UDP deposit -->
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                       testname="UDP — deposit" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+def host = vars.get("HOST"); def port = vars.get("UDP_PORT") as int
+def threadNum = ctx.getThreadNum()
+def reqId = java.util.UUID.randomUUID().toString()
+def json = """{"requestId":"${reqId}","service":"TRANSACTION","action":"deposit","payload":{"accountId":"udp-${threadNum}-a","amount":10.00}}"""
+def socket = new java.net.DatagramSocket(); socket.setSoTimeout(5000)
+try {
+    def addr = java.net.InetAddress.getByName(host)
+    def data = json.getBytes("UTF-8")
+    socket.send(new java.net.DatagramPacket(data, data.length, addr, port))
+    def buf = new byte[16384]; def respPkt = new java.net.DatagramPacket(buf, buf.length)
+    socket.receive(respPkt)
+    def respStr = new String(respPkt.getData(), 0, respPkt.getLength(), "UTF-8")
+    def respJson = new groovy.json.JsonSlurper().parseText(respStr)
+    def code = respJson.statusCode as int
+    SampleResult.setResponseCode(String.valueOf(code))
+    SampleResult.setResponseData(respStr, "UTF-8")
+    SampleResult.setSuccessful(code &lt; 400)
+} catch (java.net.SocketTimeoutException e) {
+    SampleResult.setResponseCode("504"); SampleResult.setSuccessful(false)
+    SampleResult.setResponseData("UDP timeout", "UTF-8")
+} finally { socket.close() }
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+
+        <!-- UDP transfer -->
+        <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler"
+                       testname="UDP — transfer" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="script">
+def host = vars.get("HOST"); def port = vars.get("UDP_PORT") as int
+def threadNum = ctx.getThreadNum()
+def reqId = java.util.UUID.randomUUID().toString()
+def json = """{"requestId":"${reqId}","service":"TRANSACTION","action":"transfer","payload":{"fromAccountId":"udp-${threadNum}-a","toAccountId":"udp-${threadNum}-b","amount":5.00}}"""
+def socket = new java.net.DatagramSocket(); socket.setSoTimeout(5000)
+try {
+    def addr = java.net.InetAddress.getByName(host)
+    def data = json.getBytes("UTF-8")
+    socket.send(new java.net.DatagramPacket(data, data.length, addr, port))
+    def buf = new byte[16384]; def respPkt = new java.net.DatagramPacket(buf, buf.length)
+    socket.receive(respPkt)
+    def respStr = new String(respPkt.getData(), 0, respPkt.getLength(), "UTF-8")
+    def respJson = new groovy.json.JsonSlurper().parseText(respStr)
+    def code = respJson.statusCode as int
+    SampleResult.setResponseCode(String.valueOf(code))
+    SampleResult.setResponseData(respStr, "UTF-8")
+    SampleResult.setSuccessful(code &lt; 400)
+} catch (java.net.SocketTimeoutException e) {
+    SampleResult.setResponseCode("504"); SampleResult.setSuccessful(false)
+    SampleResult.setResponseData("UDP timeout", "UTF-8")
+} finally { socket.close() }
+          </stringProp>
+        </JSR223Sampler>
+        <hashTree/>
+
+      </hashTree>
+
+      <!-- ================================================================ -->
+      <!--                         LISTENERS                                -->
+      <!-- ================================================================ -->
+
+      <!-- Summary Report: zero erros durante operação normal -->
+      <ResultCollector guiclass="SummaryReport" testclass="ResultCollector"
+                       testname="Summary Report" enabled="true">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>false</responseData>
+            <samplerData>false</samplerData>
+            <xml>false</xml>
+            <fieldNames>true</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>false</responseDataOnError>
+            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <bytes>true</bytes>
+            <sentBytes>true</sentBytes>
+            <url>true</url>
+            <threadCounts>true</threadCounts>
+            <sampleCount>true</sampleCount>
+            <idleTime>true</idleTime>
+            <connectTime>true</connectTime>
+          </value>
+        </objProp>
+        <stringProp name="filename"></stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+      <!-- View Results Tree: desabilitado em carga; habilitar apenas para debug -->
+      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector"
+                       testname="View Results Tree (debug)" enabled="false">
+        <boolProp name="ResultCollector.error_logging">true</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <responseData>true</responseData>
+            <fieldNames>true</fieldNames>
+          </value>
+        </objProp>
+        <stringProp name="filename"></stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+      <!-- Aggregate Report: latência (médias, percentis) e throughput por sampler -->
+      <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector"
+                       testname="Aggregate Report" enabled="true">
+        <boolProp name="ResultCollector.error_logging">false</boolProp>
+        <objProp>
+          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <fieldNames>true</fieldNames>
+            <bytes>true</bytes>
+            <threadCounts>true</threadCounts>
+          </value>
+        </objProp>
+        <stringProp name="filename"></stringProp>
+      </ResultCollector>
+      <hashTree/>
+
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>

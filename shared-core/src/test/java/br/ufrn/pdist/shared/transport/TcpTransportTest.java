@@ -96,6 +96,29 @@ class TcpTransportTest {
         assertEquals("r-timeout", response.payload().get("requestId"));
     }
 
+    @Test
+    void shouldReturnStructured400WhenIncomingPayloadIsMalformed() throws Exception {
+        int port = findFreePort();
+        TcpTransport transport = new TcpTransport();
+        transport.startServer(port, request -> new Response(200, "ok", Map.of("requestId", request.requestId())));
+
+        Thread.sleep(150);
+
+        try (Socket socket = new Socket("127.0.0.1", port);
+             Writer writer = new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8);
+             BufferedReader reader = new BufferedReader(
+                     new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
+            writer.write("{\"requestId\":\"bad-1\"");
+            writer.write("\n");
+            writer.flush();
+
+            String rawResponse = reader.readLine();
+            assertTrue(rawResponse.contains("\"statusCode\":400"));
+            assertTrue(rawResponse.contains("\"requestId\":"));
+            assertTrue(rawResponse.contains("\"message\":\"Malformed transport payload\""));
+        }
+    }
+
     private static void runSlowServer(int port) {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             try (Socket socket = serverSocket.accept();

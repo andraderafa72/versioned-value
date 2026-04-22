@@ -1,7 +1,9 @@
 package br.ufrn.pdist.gateway;
 
 import br.ufrn.pdist.shared.boot.StartupLogger;
+import br.ufrn.pdist.shared.config.Protocol;
 import br.ufrn.pdist.shared.config.StartupConfig;
+import br.ufrn.pdist.shared.contracts.RequestHandler;
 import br.ufrn.pdist.shared.contracts.ServiceName;
 import br.ufrn.pdist.shared.transport.TransportFactory;
 import br.ufrn.pdist.shared.transport.TransportLayer;
@@ -29,7 +31,11 @@ public class GatewayApplication {
             serviceRegistry.startHeartbeatMonitor(args);
             new UdpRegistrationListener(serviceRegistry).start(args);
             GatewayRouter router = new GatewayRouter(transport, serviceRegistry, retryPolicy);
-            transport.startServer(config.port(), router::route);
+            RequestHandler entryPoint = router::route;
+            if (config.protocol() == Protocol.HTTP) {
+                entryPoint = request -> GatewayHttpInboundHandler.handle(router, request);
+            }
+            transport.startServer(config.port(), entryPoint);
         };
     }
 }

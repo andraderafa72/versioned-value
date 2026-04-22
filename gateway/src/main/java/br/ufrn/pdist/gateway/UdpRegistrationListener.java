@@ -2,6 +2,7 @@ package br.ufrn.pdist.gateway;
 
 import br.ufrn.pdist.shared.contracts.Instance;
 import br.ufrn.pdist.shared.contracts.ServiceName;
+import br.ufrn.pdist.shared.logging.EventLog;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -40,10 +41,13 @@ final class UdpRegistrationListener {
                 handle(packet);
             }
         } catch (IOException exception) {
-            System.err.printf(
-                    "event=udp-registration-listener-error port=%d message=%s%n",
-                    registrationPort,
-                    exception.getMessage()
+            EventLog.printlnWithStackTraceStderr(
+                    String.format(
+                            "event=udp-registration-listener-error port=%d message=%s",
+                            registrationPort,
+                            exception.getMessage()
+                    ),
+                    exception
             );
         }
     }

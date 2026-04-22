@@ -2,6 +2,7 @@ package br.ufrn.pdist.shared.discovery;
 
 import br.ufrn.pdist.shared.config.StartupConfig;
 import br.ufrn.pdist.shared.contracts.ServiceName;
+import br.ufrn.pdist.shared.logging.EventLog;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -51,11 +52,14 @@ public final class UdpRegistrationClient {
                     target.port()
             );
         } catch (IOException exception) {
-            System.err.printf(
-                    "event=instance-registration-error service=%s instanceId=%s message=%s%n",
-                    serviceName,
-                    startupConfig.instanceId(),
-                    exception.getMessage()
+            EventLog.printlnWithStackTraceStderr(
+                    String.format(
+                            "event=instance-registration-error service=%s instanceId=%s message=%s",
+                            serviceName,
+                            startupConfig.instanceId(),
+                            exception.getMessage()
+                    ),
+                    exception
             );
         }
         scheduleHeartbeat(serviceName, startupConfig, target);
@@ -86,11 +90,14 @@ public final class UdpRegistrationClient {
             DatagramPacket packet = new DatagramPacket(payload, payload.length, gatewayAddress, target.port());
             socket.send(packet);
         } catch (IOException exception) {
-            System.err.printf(
-                    "event=heartbeat-send-error service=%s instanceId=%s message=%s%n",
-                    serviceName,
-                    startupConfig.instanceId(),
-                    exception.getMessage()
+            EventLog.printlnWithStackTraceStderr(
+                    String.format(
+                            "event=heartbeat-send-error service=%s instanceId=%s message=%s",
+                            serviceName,
+                            startupConfig.instanceId(),
+                            exception.getMessage()
+                    ),
+                    exception
             );
         }
     }

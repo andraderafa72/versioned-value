@@ -2,8 +2,12 @@ package br.ufrn.pdist.account;
 
 import br.ufrn.pdist.account.application.AccountRequestHandler;
 import br.ufrn.pdist.shared.boot.StartupLogger;
+import br.ufrn.pdist.shared.config.Protocol;
 import br.ufrn.pdist.shared.config.StartupConfig;
+import br.ufrn.pdist.shared.contracts.Request;
+import br.ufrn.pdist.shared.contracts.RequestHandler;
 import br.ufrn.pdist.shared.contracts.ServiceName;
+import br.ufrn.pdist.shared.http.BankingHttpRoutes;
 import br.ufrn.pdist.shared.discovery.UdpRegistrationClient;
 import br.ufrn.pdist.shared.transport.TransportFactory;
 import br.ufrn.pdist.shared.transport.TransportLayer;
@@ -26,7 +30,17 @@ public class AccountServiceApplication {
             StartupLogger.logStartup(ServiceName.ACCOUNT, config);
             UdpRegistrationClient.registerAtGateway(ServiceName.ACCOUNT, config, args);
             TransportLayer transport = TransportFactory.create(config.protocol());
-            transport.startServer(config.port(), handler::handle);
+            RequestHandler pipeline = handler::handle;
+            if (config.protocol() == Protocol.HTTP) {
+                pipeline = (Request req) -> {
+                    Request mapped = BankingHttpRoutes.parseServiceRequest(ServiceName.ACCOUNT, req);
+                    if (mapped == null) {
+                        return BankingHttpRoutes.unknownRouteResponse(req);
+                    }
+                    return handler.handle(mapped);
+                };
+            }
+            transport.startServer(config.port(), pipeline);
         };
     }
 }
