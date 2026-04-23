@@ -30,6 +30,18 @@ class AccountVersioningServiceTest {
     }
 
     @Test
+    void shouldApplyDebitAndCreditWithSameRequestIdOnDifferentAccounts() {
+        AccountVersioningService service = new AccountVersioningService();
+        String transferRequestId = "tx-same-id";
+        service.createAccount("acc-a", new BigDecimal("1000"));
+        service.createAccount("acc-b", new BigDecimal("1000"));
+        service.debit("acc-a", new BigDecimal("15"), transferRequestId);
+        service.credit("acc-b", new BigDecimal("15"), transferRequestId);
+        assertEquals(new BigDecimal("985"), service.getCurrentBalance("acc-a"));
+        assertEquals(new BigDecimal("1015"), service.getCurrentBalance("acc-b"));
+    }
+
+    @Test
     void shouldAppendWithoutMutatingPreviousSnapshot() {
         AccountVersioningService service = new AccountVersioningService();
         service.createAccount("acc-1", BigDecimal.TEN);

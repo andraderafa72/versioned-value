@@ -100,6 +100,33 @@ class TransactionRequestHandlerTest {
     }
 
     @Test
+    void shouldPropagateClientErrorWhenTransferCreditFailsWith400() {
+        StubTransport transport = new StubTransport();
+        transport.responses = List.of(
+                new Response(200, "balance debited", Map.of("balance", "70.00")),
+                new Response(400, "account not found: acc-2", Map.of("message", "account not found: acc-2")),
+                new Response(200, "balance credited", Map.of("balance", "100.00"))
+        );
+        TransactionRequestHandler handler = new TransactionRequestHandler(transport, gatewayInstance());
+
+        Response transfer = handler.handle(new Request(
+                "req-transfer-400",
+                ServiceName.TRANSACTION,
+                "transfer",
+                gatewayPayload(Map.of(
+                        "fromAccountId", "acc-1",
+                        "toAccountId", "acc-2",
+                        "amount", "30.00"
+                ))
+        ));
+
+        assertEquals(400, transfer.statusCode());
+        assertEquals("account not found: acc-2", transfer.message());
+        assertEquals("FAILED", transfer.payload().get("transactionStatus"));
+        assertEquals(3, transport.requests.size());
+    }
+
+    @Test
     void shouldRejectRequestsWithoutGatewayForwarding() {
         StubTransport transport = new StubTransport();
         TransactionRequestHandler handler = new TransactionRequestHandler(transport, gatewayInstance());

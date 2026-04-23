@@ -6,6 +6,7 @@ import br.ufrn.pdist.shared.contracts.RequestHandler;
 import br.ufrn.pdist.shared.contracts.Response;
 import br.ufrn.pdist.shared.logging.EventLog;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -20,7 +21,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class UdpTransport implements TransportLayer {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    /**
+     * UDP clients often send the same logical JSON as TCP (optionally with trailing newline/BOM) or add
+     * root-level keys (e.g. timeout). Be tolerant so external tools do not fail deserialization.
+     */
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     private static final int MAX_PACKET_BYTES = 16 * 1024;
     private static final int DEFAULT_TIMEOUT_MILLIS = 500;
     private static final int DEFAULT_RETRY_ATTEMPTS = 2;
@@ -32,7 +38,9 @@ public final class UdpTransport implements TransportLayer {
     @Override
     public void startServer(int port, RequestHandler handler) {
         Thread serverThread = new Thread(() -> runServer(port, handler), "udp-server-" + port);
-        serverThread.setDaemon(true);
+        // Same rationale as TcpTransport: non-daemon keeps the JVM alive when the process has no
+        // embedded web server or other non-daemon threads (e.g. gateway with spring-boot-starter only).
+        serverThread.setDaemon(false);
         serverThread.start();
     }
 
@@ -139,7 +147,7 @@ public final class UdpTransport implements TransportLayer {
     private void handleIncomingPacket(DatagramSocket socket, DatagramPacket packet, RequestHandler handler) {
         String requestId = UUID.randomUUID().toString();
         try {
-            String rawRequest = new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8);
+            String rawRequest = utf8DatagramBody(packet);
             requestId = extractRequestId(rawRequest);
             Request request = OBJECT_MAPPER.readValue(rawRequest, Request.class);
             Request normalized = normalizeRequest(request);
@@ -234,8 +242,31 @@ public final class UdpTransport implements TransportLayer {
     }
 
     private static Response decodeResponse(DatagramPacket packet) throws IOException {
-        String raw = new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8);
+        String raw = utf8DatagramBody(packet);
         return OBJECT_MAPPER.readValue(raw, Response.class);
+    }
+
+    /**
+     * Uses only {@link DatagramPacket#getLength()} bytes from the buffer (valid payload), decodes UTF-8,
+     * strips BOM and leading/trailing whitespace (e.g. newline copied from TCP-style payloads).
+     */
+    private static String utf8DatagramBody(DatagramPacket packet) {
+        return normalizeUdpUtf8Text(
+                packet.getData(),
+                packet.getOffset(),
+                packet.getLength()
+        );
+    }
+
+    private static String normalizeUdpUtf8Text(byte[] data, int offset, int length) {
+        if (length <= 0) {
+            return "";
+        }
+        String text = new String(data, offset, length, StandardCharsets.UTF_8);
+        if (!text.isEmpty() && text.charAt(0) == '\uFEFF') {
+            text = text.substring(1);
+        }
+        return text.strip();
     }
 
     private static String extractResponseRequestId(Response response, String fallbackRequestId) {

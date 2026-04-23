@@ -21,6 +21,8 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class HttpTransport implements TransportLayer {
 
@@ -36,19 +38,17 @@ public final class HttpTransport implements TransportLayer {
     }
 
     private void runServer(int port, RequestHandler handler) {
-        try (ServerSocket serverSocket = new ServerSocket(port, 300)) {
+        ExecutorService workerPool = Executors.newFixedThreadPool(TransportServerDefaults.WORKER_POOL_SIZE);
+        try (ServerSocket serverSocket = new ServerSocket(port, TransportServerDefaults.ACCEPT_BACKLOG)) {
             System.out.printf("transport=http event=server-started port=%d%n", port);
             while (true) {
                 Socket client = serverSocket.accept();
-                Thread worker = new Thread(
-                        () -> handleConnection(client, handler),
-                        "http-conn-" + client.getPort()
-                );
-                worker.setDaemon(false);
-                worker.start();
+                workerPool.execute(() -> handleConnection(client, handler));
             }
         } catch (IOException e) {
             System.err.printf("transport=http event=server-failure port=%d error=\"%s\"%n", port, e.getMessage());
+        } finally {
+            workerPool.shutdown();
         }
     }
 

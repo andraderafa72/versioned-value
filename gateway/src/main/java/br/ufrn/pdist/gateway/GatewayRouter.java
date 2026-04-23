@@ -61,13 +61,13 @@ final class GatewayRouter {
                     break;
                 }
 
-                Instance selectedInstance = selectNextCandidate(
-                        requestId,
-                        request.service(),
-                        previousInstanceId,
-                        healthyInstances.size()
-                );
+                Instance selectedInstance = selectNextCandidate(requestId, request.service(), previousInstanceId, healthyInstances);
                 if (selectedInstance == null) {
+                    System.out.printf(
+                            "event=routing-aborted requestId=%s service=%s reason=no-candidate-after-selection%n",
+                            requestId,
+                            request.service()
+                    );
                     break;
                 }
 
@@ -148,23 +148,71 @@ final class GatewayRouter {
         return request.requestId();
     }
 
+    /**
+     * First attempt for a client request uses strict round-robin ({@link GatewayServiceRegistry#selectNextInstance}).
+     * Retries after a transient (5xx) failure pick the <strong>next</strong> instance in the sorted healthy list
+     * (circular walk), without consuming the RR counter — so concurrent traffic cannot starve failover or leave
+     * {@code selectNextCandidate} with no candidate while other instances are healthy.
+     */
     private Instance selectNextCandidate(
             String requestId,
             ServiceName service,
             String previousInstanceId,
-            int healthyPoolSize
+            List<Instance> healthyInstances
     ) {
-        for (int selectionAttempt = 0; selectionAttempt < healthyPoolSize; selectionAttempt++) {
+        int healthyPoolSize = healthyInstances.size();
+        if (healthyPoolSize == 0) {
+            return null;
+        }
+
+        if (previousInstanceId == null) {
             Instance candidate = serviceRegistry.selectNextInstance(service);
-            if (candidate == null) {
-                return null;
-            }
-            if (healthyPoolSize == 1 || !candidate.instanceId().equals(previousInstanceId)) {
+            if (candidate != null) {
                 logRoutingDecision(requestId, service, candidate, healthyPoolSize);
-                return candidate;
+            }
+            return candidate;
+        }
+
+        int prevIdx = indexOfInstanceId(healthyInstances, previousInstanceId);
+        if (prevIdx < 0) {
+            Instance candidate = serviceRegistry.selectNextInstance(service);
+            if (candidate != null) {
+                System.out.printf(
+                        "event=retry-fallback-unknown-previous requestId=%s service=%s previousInstanceId=%s%n",
+                        requestId,
+                        service,
+                        previousInstanceId
+                );
+                logRoutingDecision(requestId, service, candidate, healthyPoolSize);
+            }
+            return candidate;
+        }
+
+        if (healthyPoolSize == 1) {
+            Instance only = healthyInstances.get(0);
+            logRoutingDecision(requestId, service, only, healthyPoolSize);
+            return only;
+        }
+
+        Instance candidate = healthyInstances.get((prevIdx + 1) % healthyPoolSize);
+        System.out.printf(
+                "event=retry-instance-rotate requestId=%s service=%s failedInstanceId=%s nextInstanceId=%s%n",
+                requestId,
+                service,
+                previousInstanceId,
+                candidate.instanceId()
+        );
+        logRoutingDecision(requestId, service, candidate, healthyPoolSize);
+        return candidate;
+    }
+
+    private static int indexOfInstanceId(List<Instance> instances, String instanceId) {
+        for (int i = 0; i < instances.size(); i++) {
+            if (instances.get(i).instanceId().equals(instanceId)) {
+                return i;
             }
         }
-        return null;
+        return -1;
     }
 
     private void backoff() {

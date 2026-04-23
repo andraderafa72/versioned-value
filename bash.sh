@@ -29,6 +29,9 @@ LOG_DIR="$SCRIPT_DIR/logs"
 GATEWAY_ROUTING_ARGS="${GATEWAY_ROUTING_ARGS:-}"
 ACCOUNT_ENDPOINTS="${ACCOUNT_INSTANCES:-127.0.0.1:8081,127.0.0.1:8082}"
 TRANSACTION_ENDPOINTS="${TRANSACTION_INSTANCES:-127.0.0.1:8083,127.0.0.1:8084}"
+# Estado compartilhado (account) e locks de transferência (transaction) usam Redis quando habilitado.
+# Padrão: ligado; sobrescreva com REDIS_ARGS="" para usar apenas memória local, ou adicione --redis.host= etc.
+REDIS_ARGS="${REDIS_ARGS:---redis.enabled=true}"
 mkdir -p "$LOG_DIR"
 
 PIDS=()
@@ -62,6 +65,9 @@ free_port_if_busy() {
 trap cleanup INT TERM EXIT
 
 echo "[INFO] Subindo apps com protocolo: $PROTOCOL"
+if [[ -n "${REDIS_ARGS// }" ]]; then
+  echo "[INFO] Redis para account/transaction: $REDIS_ARGS (esperado em 127.0.0.1:6379 se não configurado)"
+fi
 
 free_port_if_busy 8080
 free_port_if_busy 8081
@@ -83,25 +89,25 @@ PIDS+=("$!")
 echo "[INFO] Logs Gateway: $LOG_DIR/gateway.log"
 
 echo "[INFO] Iniciando Account Service (instancia 1 na porta 8081)..."
-mvn -q $MAVEN_OPTS_LOCAL_REPO -pl account-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8081 --instance-id=account-1" \
+mvn -q $MAVEN_OPTS_LOCAL_REPO -pl account-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8081 --instance-id=account-1 $REDIS_ARGS" \
   > "$LOG_DIR/account-service-1.log" 2>&1 &
 PIDS+=("$!")
 echo "[INFO] Logs Account Service 1: $LOG_DIR/account-service-1.log"
 
 echo "[INFO] Iniciando Account Service (instancia 2 na porta 8082)..."
-mvn -q $MAVEN_OPTS_LOCAL_REPO -pl account-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8082 --instance-id=account-2" \
+mvn -q $MAVEN_OPTS_LOCAL_REPO -pl account-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8082 --instance-id=account-2 $REDIS_ARGS" \
   > "$LOG_DIR/account-service-2.log" 2>&1 &
 PIDS+=("$!")
 echo "[INFO] Logs Account Service 2: $LOG_DIR/account-service-2.log"
 
 echo "[INFO] Iniciando Transaction Service (instancia 1 na porta 8083)..."
-mvn -q $MAVEN_OPTS_LOCAL_REPO -pl transaction-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8083 --instance-id=transaction-1" \
+mvn -q $MAVEN_OPTS_LOCAL_REPO -pl transaction-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8083 --instance-id=transaction-1 $REDIS_ARGS" \
   > "$LOG_DIR/transaction-service-1.log" 2>&1 &
 PIDS+=("$!")
 echo "[INFO] Logs Transaction Service 1: $LOG_DIR/transaction-service-1.log"
 
 echo "[INFO] Iniciando Transaction Service (instancia 2 na porta 8084)..."
-mvn -q $MAVEN_OPTS_LOCAL_REPO -pl transaction-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8084 --instance-id=transaction-2" \
+mvn -q $MAVEN_OPTS_LOCAL_REPO -pl transaction-service spring-boot:run -Dspring-boot.run.arguments="--protocol=$PROTOCOL --port=8084 --instance-id=transaction-2 $REDIS_ARGS" \
   > "$LOG_DIR/transaction-service-2.log" 2>&1 &
 PIDS+=("$!")
 echo "[INFO] Logs Transaction Service 2: $LOG_DIR/transaction-service-2.log"

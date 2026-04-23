@@ -9,9 +9,6 @@ import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import org.springframework.stereotype.Component;
-
-@Component
 public class AccountRequestHandler implements RequestHandler {
 
     private static final String ACTION_CREATE = "createAccount";
@@ -53,16 +50,31 @@ public class AccountRequestHandler implements RequestHandler {
         if (initialBalance.compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("initialBalance must be >= 0");
         }
-        Account account = accountService.createAccount(accountId, initialBalance);
+        Account account = accountService.createAccount(accountId, initialBalance, request.requestId());
         System.out.printf("event=account-created accountId=%s balance=%s%n", account.id(), account.latestBalance());
-        return success(201, request.requestId(), "account created", account.id(), account.latestBalance());
+        return success(
+                201,
+                request.requestId(),
+                "account created",
+                account.id(),
+                account.latestBalance(),
+                account.history().get(account.history().size() - 1).version()
+        );
     }
 
     private Response handleGetBalance(Request request) {
         Map<String, Object> payload = payloadOrEmpty(request.payload());
         String accountId = requiredString(payload, "accountId");
         BigDecimal balance = accountService.getCurrentBalance(accountId);
-        return success(200, request.requestId(), "balance retrieved", accountId, balance);
+        Account account = accountService.getAccount(accountId);
+        return success(
+                200,
+                request.requestId(),
+                "balance retrieved",
+                accountId,
+                balance,
+                account.history().get(account.history().size() - 1).version()
+        );
     }
 
     private Response handleCredit(Request request) {
@@ -72,10 +84,15 @@ public class AccountRequestHandler implements RequestHandler {
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("amount must be > 0");
         }
-        BigDecimal currentBalance = accountService.getCurrentBalance(accountId);
-        BigDecimal updatedBalance = currentBalance.add(amount);
-        accountService.addBalanceVersion(accountId, updatedBalance);
-        return success(200, request.requestId(), "balance credited", accountId, updatedBalance);
+        Account account = accountService.credit(accountId, amount, request.requestId());
+        return success(
+                200,
+                request.requestId(),
+                "balance credited",
+                accountId,
+                account.latestBalance(),
+                account.history().get(account.history().size() - 1).version()
+        );
     }
 
     private Response handleDebit(Request request) {
@@ -85,13 +102,15 @@ public class AccountRequestHandler implements RequestHandler {
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("amount must be > 0");
         }
-        BigDecimal currentBalance = accountService.getCurrentBalance(accountId);
-        if (currentBalance.compareTo(amount) < 0) {
-            throw new IllegalArgumentException("insufficient funds");
-        }
-        BigDecimal updatedBalance = currentBalance.subtract(amount);
-        accountService.addBalanceVersion(accountId, updatedBalance);
-        return success(200, request.requestId(), "balance debited", accountId, updatedBalance);
+        Account account = accountService.debit(accountId, amount, request.requestId());
+        return success(
+                200,
+                request.requestId(),
+                "balance debited",
+                accountId,
+                account.latestBalance(),
+                account.history().get(account.history().size() - 1).version()
+        );
     }
 
     private static Map<String, Object> payloadOrEmpty(Map<String, Object> payload) {
@@ -140,10 +159,24 @@ public class AccountRequestHandler implements RequestHandler {
             String accountId,
             BigDecimal balance
     ) {
+        return success(statusCode, requestId, message, accountId, balance, null);
+    }
+
+    private static Response success(
+            int statusCode,
+            String requestId,
+            String message,
+            String accountId,
+            BigDecimal balance,
+            Long accountVersion
+    ) {
         Map<String, Object> responsePayload = new LinkedHashMap<>();
         responsePayload.put("requestId", requestId);
         responsePayload.put("accountId", accountId);
         responsePayload.put("balance", balance);
+        if (accountVersion != null) {
+            responsePayload.put("accountVersion", accountVersion);
+        }
         responsePayload.put("message", message);
         return new Response(statusCode, message, Map.copyOf(responsePayload));
     }

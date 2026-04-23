@@ -1,8 +1,10 @@
 package br.ufrn.pdist.account;
 
 import br.ufrn.pdist.account.application.AccountRequestHandler;
+import br.ufrn.pdist.account.application.AccountVersioningService;
 import br.ufrn.pdist.shared.boot.StartupLogger;
 import br.ufrn.pdist.shared.config.Protocol;
+import br.ufrn.pdist.shared.config.RedisConfig;
 import br.ufrn.pdist.shared.config.StartupConfig;
 import br.ufrn.pdist.shared.contracts.Request;
 import br.ufrn.pdist.shared.contracts.RequestHandler;
@@ -24,12 +26,23 @@ public class AccountServiceApplication {
     }
 
     @Bean
-    CommandLineRunner accountStartupRunner(AccountRequestHandler handler) {
+    CommandLineRunner accountStartupRunner() {
         return args -> {
             StartupConfig config = StartupConfig.fromArgs(args, 8081, "account-1");
+            RedisConfig redisConfig = RedisConfig.fromArgs(args);
             StartupLogger.logStartup(ServiceName.ACCOUNT, config);
+            if (redisConfig.enabled()) {
+                System.out.printf(
+                        "event=redis-enabled host=%s port=%d db=%d timeoutMs=%d%n",
+                        redisConfig.host(),
+                        redisConfig.port(),
+                        redisConfig.database(),
+                        redisConfig.timeout().toMillis()
+                );
+            }
             UdpRegistrationClient.registerAtGateway(ServiceName.ACCOUNT, config, args);
             TransportLayer transport = TransportFactory.create(config.protocol());
+            AccountRequestHandler handler = new AccountRequestHandler(new AccountVersioningService(redisConfig));
             RequestHandler pipeline = handler::handle;
             if (config.protocol() == Protocol.HTTP) {
                 pipeline = (Request req) -> {

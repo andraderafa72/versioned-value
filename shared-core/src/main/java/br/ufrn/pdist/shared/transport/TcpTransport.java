@@ -88,8 +88,8 @@ public final class TcpTransport implements TransportLayer {
     }
 
     private void runServer(int port, String transportName, ServerSocketOperation operation) {
-        ExecutorService workerPool = Executors.newFixedThreadPool(300);
-        try (ServerSocket serverSocket = new ServerSocket(port, 300)) {
+        ExecutorService workerPool = Executors.newFixedThreadPool(TransportServerDefaults.WORKER_POOL_SIZE);
+        try (ServerSocket serverSocket = new ServerSocket(port, TransportServerDefaults.ACCEPT_BACKLOG)) {
             System.out.printf("transport=%s event=server-started port=%d%n", transportName, port);
             while (true) {
                 Socket clientSocket = serverSocket.accept();

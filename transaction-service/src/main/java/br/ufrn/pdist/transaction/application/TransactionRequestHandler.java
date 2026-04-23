@@ -31,7 +31,11 @@ public class TransactionRequestHandler {
     private final ConcurrentMap<String, Response> responsesByRequestId = new ConcurrentHashMap<>();
 
     public TransactionRequestHandler(TransportLayer transport, Instance gatewayInstance) {
-        this(transport, gatewayInstance, new TransactionVersioningService(), new AccountLockManager());
+        this(transport, gatewayInstance, new TransactionVersioningService(), new LocalAccountLockManager());
+    }
+
+    public TransactionRequestHandler(TransportLayer transport, Instance gatewayInstance, AccountLockManager accountLockManager) {
+        this(transport, gatewayInstance, new TransactionVersioningService(), accountLockManager);
     }
 
     TransactionRequestHandler(
@@ -169,6 +173,10 @@ public class TransactionRequestHandler {
                     "amount", amount
             ));
             appendState(request, TransactionStatus.COMPENSATED, "transfer compensated after credit failure");
+            int creditStatus = credit.statusCode();
+            if (creditStatus >= 400 && creditStatus < 500) {
+                return failure(request, creditStatus, credit.message());
+            }
             String message = "transfer failed at credit step; compensationStatus=" + compensation.statusCode();
             return failure(request, 502, message);
         }

@@ -100,6 +100,46 @@ class UdpTransportTest {
     }
 
     @Test
+    void shouldAcceptTrailingWhitespaceAndUnknownRootFieldsOnUdpJson() throws Exception {
+        int port = findFreeUdpPort();
+        UdpTransport transport = new UdpTransport();
+        transport.startServer(port, request -> new Response(
+                200,
+                "ok",
+                Map.of("requestId", request.requestId(), "service", request.service().name())
+        ));
+        Thread.sleep(150);
+
+        try (DatagramSocket socket = new DatagramSocket()) {
+            socket.setSoTimeout(2_000);
+            String json = "{\"requestId\":\"udp-edge\",\"service\":\"ACCOUNT\",\"action\":\"ping\",\"payload\":{},\"clientMeta\":{\"tool\":\"jmeter\"}}\n\r ";
+            byte[] rawRequest = json.getBytes(StandardCharsets.UTF_8);
+            DatagramPacket requestPacket = new DatagramPacket(
+                    rawRequest,
+                    rawRequest.length,
+                    InetAddress.getByName("127.0.0.1"),
+                    port
+            );
+            socket.send(requestPacket);
+
+            DatagramPacket responsePacket = new DatagramPacket(new byte[16 * 1024], 16 * 1024);
+            socket.receive(responsePacket);
+            Response response = OBJECT_MAPPER.readValue(
+                    new String(
+                            responsePacket.getData(),
+                            responsePacket.getOffset(),
+                            responsePacket.getLength(),
+                            StandardCharsets.UTF_8
+                    ),
+                    Response.class
+            );
+            assertEquals(200, response.statusCode());
+            assertEquals("udp-edge", response.payload().get("requestId"));
+            assertEquals("ACCOUNT", response.payload().get("service"));
+        }
+    }
+
+    @Test
     void shouldReturnErrorDatagramWhenIncomingPayloadIsMalformed() throws Exception {
         int port = findFreeUdpPort();
         UdpTransport transport = new UdpTransport();
